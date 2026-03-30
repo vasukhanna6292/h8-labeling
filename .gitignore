@@ -1,0 +1,55 @@
+# Environment
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+
+# Uploads
+backend/uploads/
+
+# Model weights (large files)
+backend/weights/*.pt
+backend/weights/*.pth
+*.pt
+*.pth
+
+# Alembic
+alembic/versions/*.py
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker
+.dockerignore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+frontend/node_modules/
+node_modules/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SSH keys
+*.key
+*.pem
