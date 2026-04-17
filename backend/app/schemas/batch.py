@@ -12,6 +12,7 @@ class BatchRead(BaseModel):
     name: str
     status: BatchStatus
     created_at: datetime
+    classes: list[str] | None = None
 
     class Config:
         from_attributes = True

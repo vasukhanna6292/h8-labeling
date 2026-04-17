@@ -4,7 +4,8 @@ import math
 import os
 import zipfile
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import yaml
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -203,10 +204,12 @@ def batch_classes(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """Return all unique class names detected in this batch (for the draw-box dropdown)."""
+    """Return class names for this batch. Uses YAML-defined classes if set, else from predictions."""
     batch = db.query(Batch).filter(Batch.id == batch_id).first()
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
+    if batch.classes:
+        return batch.classes
     predictions = (
         db.query(Prediction.class_name)
         .join(Image)
@@ -215,6 +218,48 @@ def batch_classes(
         .all()
     )
     return sorted(p.class_name for p in predictions)
+
+
+@router.post("/{batch_id}/upload-yaml")
+async def upload_yaml(
+    batch_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_lead),
+):
+    """Upload a YOLO data.yaml file to define class names for this batch."""
+    batch = db.query(Batch).filter(Batch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    content = await file.read()
+    try:
+        data = yaml.safe_load(content)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid YAML file")
+    names = data.get("names", [])
+    if isinstance(names, dict):
+        names = [names[k] for k in sorted(names.keys())]
+    if not names:
+        raise HTTPException(status_code=400, detail="No class names found in YAML. Expected 'names' key.")
+    batch.classes = [str(n) for n in names]
+    db.commit()
+    return {"classes": batch.classes}
+
+
+@router.put("/{batch_id}/classes")
+def update_classes(
+    batch_id: int,
+    classes: list[str],
+    db: Session = Depends(get_db),
+    _: User = Depends(require_lead),
+):
+    """Manually set or update class names for a batch."""
+    batch = db.query(Batch).filter(Batch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    batch.classes = [c.strip() for c in classes if c.strip()]
+    db.commit()
+    return {"classes": batch.classes}
 
 
 @router.get("/{batch_id}/progress")

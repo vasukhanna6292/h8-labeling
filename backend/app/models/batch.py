@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Enum, DateTime
+from sqlalchemy import Column, Integer, String, Enum, DateTime, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -20,5 +20,6 @@ class Batch(Base):
     name = Column(String, nullable=False)
     status = Column(Enum(BatchStatus), nullable=False, default=BatchStatus.pending)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    classes = Column(JSON, nullable=True)  # list of class name strings from YAML
 
     images = relationship("Image", back_populates="batch")

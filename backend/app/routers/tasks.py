@@ -39,6 +39,7 @@ def get_my_queue(
             batch_id=batch.id,
             batch_name=batch.name,
             file_name=os.path.basename(image.file_path),
+            created_at=task.created_at,
         ))
     return results
 

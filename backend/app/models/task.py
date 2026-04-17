@@ -1,5 +1,6 @@
-from sqlalchemy import Column, Integer, String, Enum, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, Enum, ForeignKey, Text, DateTime
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
 
 from app.database import Base
 
@@ -21,6 +22,7 @@ class Task(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     status = Column(Enum(TaskStatus), nullable=False, default=TaskStatus.pending)
     annotations_json = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     image = relationship("Image", back_populates="task")
     user = relationship("User", back_populates="tasks")

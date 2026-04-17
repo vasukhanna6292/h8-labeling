@@ -8,12 +8,18 @@ export default function AnnotatorQueue() {
   const navigate = useNavigate()
   const [tasks, setTasks] = useState([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
   useEffect(() => {
     async function load() {
-      const t = await apiGet('/tasks/my-queue')
-      setTasks(t)
-      setLoading(false)
+      try {
+        const t = await apiGet('/tasks/my-queue')
+        setTasks(t || [])
+      } catch (err) {
+        setError(err.message || 'Failed to load tasks')
+      } finally {
+        setLoading(false)
+      }
     }
     load()
   }, [])
@@ -67,6 +73,11 @@ export default function AnnotatorQueue() {
       <div className="max-w-2xl mx-auto p-6">
         {loading ? (
           <p className="text-gray-400 text-center mt-12">Loading tasks...</p>
+        ) : error ? (
+          <div className="text-center mt-16">
+            <p className="text-red-400 text-lg">Failed to load tasks</p>
+            <p className="text-gray-600 text-sm mt-2">{error}</p>
+          </div>
         ) : tasks.length === 0 ? (
           <div className="text-center mt-16">
             <p className="text-gray-400 text-lg">No tasks assigned yet.</p>
@@ -96,7 +107,12 @@ export default function AnnotatorQueue() {
                     {/* Batch header with progress */}
                     <div className="px-4 py-3 border-b border-gray-800">
                       <div className="flex items-center justify-between mb-2">
-                        <h2 className="text-sm font-semibold text-white">{batchName}</h2>
+                        <div>
+                          <h2 className="text-sm font-semibold text-white">{batchName}</h2>
+                          {batchTasks[0]?.created_at && (
+                            <p className="text-xs text-gray-600 mt-0.5">Assigned {formatDate(batchTasks[0].created_at)}</p>
+                          )}
+                        </div>
                         <div className="flex items-center gap-3">
                           <span className="text-xs text-gray-400">{completed}/{total} complete</span>
                           <button
@@ -161,6 +177,12 @@ export default function AnnotatorQueue() {
   )
 }
 
+function formatDate(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
 function TaskRow({ task, onClick, onDelete }) {
   const STATUS_COLOR = {
     pending: 'bg-gray-700 text-gray-300',
@@ -179,7 +201,10 @@ function TaskRow({ task, onClick, onDelete }) {
           <p className="text-sm text-white group-hover:text-blue-300 transition">
             {task.file_name || `Image #${task.image_id}`}
           </p>
-          <p className="text-xs text-gray-500 mt-0.5">Task #{task.id}</p>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Task #{task.id}
+            {task.created_at && <span className="ml-2 text-gray-600">· {formatDate(task.created_at)}</span>}
+          </p>
         </div>
         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLOR[task.status]}`}>
           {task.status}

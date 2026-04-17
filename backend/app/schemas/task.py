@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from datetime import datetime
 from app.models.task import TaskStatus
 
 
@@ -11,6 +12,7 @@ class TaskRead(BaseModel):
     batch_id: int | None = None
     batch_name: str | None = None
     file_name: str | None = None
+    created_at: datetime | None = None
 
     class Config:
         from_attributes = True

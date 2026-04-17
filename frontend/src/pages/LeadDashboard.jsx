@@ -3,6 +3,8 @@ import { apiGet, apiPost, apiDelete, createInvite, getCurrentModel, uploadModel,
 import { useAuth } from '../context/AuthContext'
 import { useNavigate } from 'react-router-dom'
 
+const BOX_COLORS = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F', '#82E0AA', '#F1948A']
+
 export default function LeadDashboard() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
@@ -24,8 +26,12 @@ export default function LeadDashboard() {
   const [modelInfo, setModelInfo] = useState(null)
   const [modelUploadProgress, setModelUploadProgress] = useState(null) // null | 0-100
   const [modelMsg, setModelMsg] = useState('')
+  const [batchClasses, setBatchClasses] = useState([])
+  const [newClassName, setNewClassName] = useState('')
+  const [yamlUploading, setYamlUploading] = useState(false)
   const modelFileRef = useRef()
   const fileRef = useRef()
+  const yamlFileRef = useRef()
 
   useEffect(() => {
     apiGet('/batches/').then(setBatches)
@@ -56,14 +62,17 @@ export default function LeadDashboard() {
     setSelectedBatch(batch)
     setMsg('')
     setNewlyUploadedCount(0)
-    const [imgs, prog, stats] = await Promise.all([
+    setBatchClasses([])
+    const [imgs, prog, stats, classes] = await Promise.all([
       apiGet(`/images/batches/${batch.id}`),
       apiGet(`/batches/${batch.id}/progress`),
       apiGet(`/batches/${batch.id}/annotator-stats`),
+      apiGet(`/batches/${batch.id}/classes`).catch(() => []),
     ])
     setImages(imgs)
     setProgress(prog)
     setAnnotatorStats(stats)
+    setBatchClasses(classes)
     setSelectedAnnotators([])
   }
 
@@ -178,6 +187,66 @@ export default function LeadDashboard() {
     }
   }
 
+  async function handleYamlUpload(e) {
+    const file = e.target.files[0]
+    if (!file || !selectedBatch) return
+    setYamlUploading(true)
+    setMsg('')
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/batches/${selectedBatch.id}/upload-yaml`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+        body: formData,
+      })
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Upload failed') }
+      const data = await res.json()
+      setBatchClasses(data.classes)
+      setMsg(`✓ YAML uploaded — ${data.classes.length} classes loaded: ${data.classes.join(', ')}`)
+    } catch (err) {
+      setMsg(`Error: ${err.message}`)
+    } finally {
+      setYamlUploading(false)
+      yamlFileRef.current.value = ''
+    }
+  }
+
+  async function addClass() {
+    if (!newClassName.trim() || !selectedBatch) return
+    const updated = [...batchClasses, newClassName.trim()]
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/batches/${selectedBatch.id}/classes`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
+        body: JSON.stringify(updated),
+      })
+      if (!res.ok) throw new Error('Failed to update classes')
+      const data = await res.json()
+      setBatchClasses(data.classes)
+      setNewClassName('')
+    } catch (err) {
+      setMsg(`Error: ${err.message}`)
+    }
+  }
+
+  async function removeClass(cls) {
+    if (!selectedBatch) return
+    const updated = batchClasses.filter(c => c !== cls)
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/batches/${selectedBatch.id}/classes`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
+        body: JSON.stringify(updated),
+      })
+      if (!res.ok) throw new Error('Failed to update classes')
+      const data = await res.json()
+      setBatchClasses(data.classes)
+    } catch (err) {
+      setMsg(`Error: ${err.message}`)
+    }
+  }
+
   async function deleteImage(img) {
     if (!confirm(`Delete "${img.file_path.split('/').pop()}"? This will also remove its predictions and task.`)) return
     try {
@@ -257,6 +326,9 @@ export default function LeadDashboard() {
                     <StatusDot status={b.status} />
                     {b.status}
                   </div>
+                  {b.created_at && (
+                    <div className="text-xs text-gray-600 mt-0.5">{new Date(b.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
+                  )}
                 </button>
                 <button
                   onClick={e => { e.stopPropagation(); deleteBatch(b) }}
@@ -310,6 +382,49 @@ export default function LeadDashboard() {
                     {uploading ? 'Uploading...' : 'Choose Files'}
                   </label>
                   <span className="text-sm text-gray-400">{images.length} image(s) in batch</span>
+                </div>
+              </div>
+
+              {/* Classes */}
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                <h3 className="text-sm font-semibold text-gray-300 mb-1">Classes</h3>
+                <p className="text-xs text-gray-500 mb-3">Upload a YOLO data.yaml to auto-load classes, or add them manually. Classes define what annotators can label in this batch.</p>
+
+                {/* YAML upload */}
+                <div className="flex items-center gap-3 mb-4">
+                  <input ref={yamlFileRef} type="file" accept=".yaml,.yml" onChange={handleYamlUpload} className="hidden" id="yaml-upload" />
+                  <label htmlFor="yaml-upload" className={`cursor-pointer bg-blue-700 hover:bg-blue-600 border border-blue-600 text-sm text-white px-4 py-2 rounded-lg transition ${yamlUploading ? 'opacity-50 pointer-events-none' : ''}`}>
+                    {yamlUploading ? 'Uploading...' : '📄 Upload data.yaml'}
+                  </label>
+                  <span className="text-xs text-gray-500">Auto-detects class names from YOLO YAML format</span>
+                </div>
+
+                {/* Current classes */}
+                {batchClasses.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {batchClasses.map((cls, i) => (
+                      <span key={i} className="flex items-center gap-1 bg-gray-800 border border-gray-700 text-xs text-gray-200 px-2 py-1 rounded-full">
+                        <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: BOX_COLORS[i % BOX_COLORS.length] }} />
+                        {cls}
+                        <button onClick={() => removeClass(cls)} className="ml-1 text-gray-500 hover:text-red-400 transition">✕</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {batchClasses.length === 0 && (
+                  <p className="text-xs text-yellow-600 mb-3">⚠ No classes defined. Upload a YAML or add manually.</p>
+                )}
+
+                {/* Add class manually */}
+                <div className="flex gap-2">
+                  <input
+                    value={newClassName}
+                    onChange={e => setNewClassName(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && addClass()}
+                    placeholder="Add class name..."
+                    className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
+                  />
+                  <button onClick={addClass} className="bg-gray-700 hover:bg-gray-600 text-white text-sm px-3 py-1.5 rounded transition">+ Add</button>
                 </div>
               </div>
 
