@@ -32,6 +32,8 @@ export default function LeadDashboard() {
   const [gcsFolder, setGcsFolder] = useState('')
   const [gcsLinking, setGcsLinking] = useState(false)
   const [exportingToGcs, setExportingToGcs] = useState(false)
+  const [showInferenceModal, setShowInferenceModal] = useState(false)
+  const [startingScratch, setStartingScratch] = useState(false)
   const modelFileRef = useRef()
   const fileRef = useRef()
   const yamlFileRef = useRef()
@@ -143,12 +145,56 @@ export default function LeadDashboard() {
   async function triggerInference() {
     try {
       await apiPost(`/batches/${selectedBatch.id}/trigger-inference`)
-      setMsg('✓ Inference queued — check back in a moment')
+      setMsg('✓ Inference queued — images will update as they complete')
       const b = await apiGet(`/batches/${selectedBatch.id}`)
       setSelectedBatch(b)
       setBatches(prev => prev.map(x => x.id === b.id ? b : x))
     } catch (err) {
       setMsg(`Error: ${err.message}`)
+    }
+  }
+
+  async function handleUploadAndRun(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    setShowInferenceModal(false)
+    setModelUploadProgress(0)
+    setModelMsg('')
+    setMsg('Uploading new model...')
+    try {
+      const result = await uploadModel(file, (loaded, total) => {
+        setModelUploadProgress(Math.round((loaded / total) * 100))
+      })
+      setModelMsg(`✓ Model updated (${result.size_mb} MB)`)
+      const info = await getCurrentModel()
+      setModelInfo(info)
+      await triggerInference()
+    } catch (err) {
+      setMsg(`Error: ${err.message}`)
+    } finally {
+      setModelUploadProgress(null)
+      modelFileRef.current.value = ''
+    }
+  }
+
+  async function startFromScratch() {
+    setStartingScratch(true)
+    setMsg('')
+    try {
+      const res = await apiPost(`/batches/${selectedBatch.id}/start-scratch`)
+      setMsg(`✓ ${res.images_count} images ready — assign tasks to annotators below`)
+      const [b, imgs] = await Promise.all([
+        apiGet(`/batches/${selectedBatch.id}`),
+        apiGet(`/images/batches/${selectedBatch.id}`),
+      ])
+      setSelectedBatch(b)
+      setBatches(prev => prev.map(x => x.id === b.id ? b : x))
+      setImages(imgs)
+      setNewlyUploadedCount(0)
+    } catch (err) {
+      setMsg(`Error: ${err.message}`)
+    } finally {
+      setStartingScratch(false)
     }
   }
 
@@ -486,16 +532,29 @@ export default function LeadDashboard() {
                 </div>
               </div>
 
-              {/* Inference */}
+              {/* Annotation Mode */}
               <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-                <h3 className="text-sm font-semibold text-gray-300 mb-3">Inference</h3>
-                <button
-                  onClick={triggerInference}
-                  disabled={selectedBatch.status === 'processing'}
-                  className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-sm px-4 py-2 rounded-lg transition"
-                >
-                  {selectedBatch.status === 'processing' ? '⏳ Running...' : '▶ Run YOLOv11 Inference'}
-                </button>
+                <h3 className="text-sm font-semibold text-gray-300 mb-1">Annotation Mode</h3>
+                <p className="text-xs text-gray-500 mb-4">Run the model to pre-populate boxes, or assign images directly for manual annotation from scratch.</p>
+                <div className="flex gap-3 flex-wrap">
+                  <button
+                    onClick={() => { setMsg(''); setShowInferenceModal(true) }}
+                    disabled={selectedBatch.status === 'processing' || images.length === 0}
+                    className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm px-4 py-2 rounded-lg transition"
+                  >
+                    {selectedBatch.status === 'processing' ? '⏳ Running...' : '▶ Run Inferences'}
+                  </button>
+                  <button
+                    onClick={startFromScratch}
+                    disabled={startingScratch || selectedBatch.status === 'processing' || images.length === 0}
+                    className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm px-4 py-2 rounded-lg transition"
+                  >
+                    {startingScratch ? 'Setting up...' : '✏ Start from Scratch'}
+                  </button>
+                </div>
+                {images.length === 0 && (
+                  <p className="text-xs text-yellow-600 mt-2">⚠ Upload or import images first.</p>
+                )}
                 {selectedBatch.status === 'processing' && (() => {
                   const inferenced = images.filter(i => i.status === 'inferenced').length
                   const total = images.length
@@ -513,6 +572,41 @@ export default function LeadDashboard() {
                   )
                 })()}
               </div>
+
+              {/* Inference modal */}
+              {showInferenceModal && (
+                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50" onClick={() => setShowInferenceModal(false)}>
+                  <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 w-full max-w-sm mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+                    <h3 className="text-white font-semibold mb-1">Run Inferences</h3>
+                    <p className="text-gray-400 text-sm mb-5">Which model weights do you want to use?</p>
+                    <div className="space-y-3">
+                      <button
+                        onClick={() => { setShowInferenceModal(false); triggerInference() }}
+                        className="w-full bg-purple-600 hover:bg-purple-700 text-white text-sm px-4 py-3 rounded-lg transition text-left flex items-center gap-3"
+                      >
+                        <span className="text-xl">⚡</span>
+                        <div>
+                          <div className="font-medium">Use existing model</div>
+                          <div className="text-xs text-purple-300 mt-0.5">
+                            {modelInfo ? `${modelInfo.size_mb} MB · updated ${new Date(modelInfo.last_modified).toLocaleDateString()}` : 'Current best.pt'}
+                          </div>
+                        </div>
+                      </button>
+                      <label className="w-full bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white text-sm px-4 py-3 rounded-lg transition cursor-pointer flex items-center gap-3">
+                        <span className="text-xl">⬆</span>
+                        <div>
+                          <div className="font-medium">Upload new model & run</div>
+                          <div className="text-xs text-gray-400 mt-0.5">Replace best.pt, then start inference</div>
+                        </div>
+                        <input type="file" accept=".pt" className="hidden" onChange={handleUploadAndRun} />
+                      </label>
+                    </div>
+                    <button onClick={() => setShowInferenceModal(false)} className="mt-4 w-full text-sm text-gray-500 hover:text-gray-300 py-1 transition">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Assign tasks */}
               <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">

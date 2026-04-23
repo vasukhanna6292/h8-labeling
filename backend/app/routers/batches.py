@@ -457,6 +457,33 @@ def export_batch_to_gcs(
     }
 
 
+@router.post("/{batch_id}/start-scratch", status_code=status.HTTP_200_OK)
+def start_scratch(
+    batch_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_lead),
+):
+    """Mark all uploaded images as ready for manual annotation without running inference."""
+    batch = db.query(Batch).filter(Batch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    images = db.query(Image).filter(
+        Image.batch_id == batch_id,
+        Image.status == ImageStatus.uploaded,
+    ).all()
+
+    if not images:
+        raise HTTPException(status_code=400, detail="No uploaded images found. Upload or import images first.")
+
+    for image in images:
+        image.status = ImageStatus.inferenced  # ready to assign, no predictions
+
+    batch.status = BatchStatus.done
+    db.commit()
+    return {"detail": f"{len(images)} images ready for annotation", "images_count": len(images)}
+
+
 @router.post("/{batch_id}/trigger-inference", status_code=status.HTTP_202_ACCEPTED)
 def trigger_inference(
     batch_id: int,
