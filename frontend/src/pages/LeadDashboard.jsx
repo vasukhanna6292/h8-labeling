@@ -439,7 +439,7 @@ export default function LeadDashboard() {
                   </button>
                 </div>
                 {selectedBatch?.gcs_folder && (
-                  <p className="text-xs text-green-500">✓ Linked: gs://h8-labeling-data/{selectedBatch.gcs_folder}</p>
+                  <p className="text-xs text-green-500">✓ Linked: gs://[bucket]/{selectedBatch.gcs_folder}</p>
                 )}
               </div>
 
