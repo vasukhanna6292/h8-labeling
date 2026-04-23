@@ -5,6 +5,7 @@ from datetime import datetime
 
 import redis as redis_lib
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -70,3 +71,16 @@ def upload_model(
         "size_mb": round(stat.st_size / 1024 / 1024, 1),
         "version": version,
     }
+
+
+@router.get("/download")
+def download_model(_: User = Depends(require_lead)):
+    """Download the current model weights file. Used by Sol script to auto-sync."""
+    path = settings.MODEL_PATH
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="No model file found")
+    return FileResponse(
+        path,
+        media_type="application/octet-stream",
+        filename="best.pt",
+    )

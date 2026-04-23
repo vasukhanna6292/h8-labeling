@@ -69,7 +69,29 @@ def main():
         sys.exit(0)
     print(f"Found {len(images)} images to process.\n")
 
-    # ── 2. Load YOLO model ───────────────────────────────────────────────────
+    # ── 2. Sync model weights from server ────────────────────────────────────
+    print(f"Checking for latest model weights from {api} ...")
+    try:
+        weight_resp = requests.get(
+            f"{api}/models/download",
+            headers=headers,
+            timeout=120,
+            stream=True,
+        )
+        if weight_resp.ok:
+            tmp_weights = args.model_path + ".download"
+            with open(tmp_weights, "wb") as wf:
+                for chunk in weight_resp.iter_content(chunk_size=8192):
+                    wf.write(chunk)
+            os.replace(tmp_weights, args.model_path)
+            size_mb = round(os.path.getsize(args.model_path) / 1024 / 1024, 1)
+            print(f"Weights synced ({size_mb} MB) → {args.model_path}")
+        else:
+            print(f"WARNING: could not sync weights ({weight_resp.status_code}), using existing file")
+    except Exception as e:
+        print(f"WARNING: weight sync failed ({e}), using existing file")
+
+    # ── 3. Load YOLO model ───────────────────────────────────────────────────
     from ultralytics import YOLO
     import torch
     print(f"Loading model from {args.model_path} on cuda:{args.device} ...")
@@ -81,7 +103,7 @@ def main():
     model.to(f"cuda:{args.device}")
     print("Model ready.\n")
 
-    # ── 3. GCS client ───────────────────────────────────────────────────────
+    # ── 4. GCS client ───────────────────────────────────────────────────────
     from google.cloud import storage as gcs_lib
     if args.gcs_key:
         gcs_client = gcs_lib.Client.from_service_account_json(args.gcs_key)
@@ -89,7 +111,7 @@ def main():
         gcs_client = gcs_lib.Client()
     bucket = gcs_client.bucket(args.gcs_bucket)
 
-    # ── 4. Inference loop ───────────────────────────────────────────────────
+    # ── 5. Inference loop ───────────────────────────────────────────────────
     success, failed = 0, 0
 
     for i, img_data in enumerate(images, 1):
@@ -154,7 +176,7 @@ def main():
             except OSError:
                 pass
 
-    # ── 5. Finalize batch ───────────────────────────────────────────────────
+    # ── 6. Finalize batch ───────────────────────────────────────────────────
     print(f"\nFinalizing batch {args.batch_id} ...")
     fin = requests.post(
         f"{api}/batches/{args.batch_id}/finalize-sol",
