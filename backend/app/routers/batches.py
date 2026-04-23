@@ -372,13 +372,13 @@ def get_gcs_image_url(
 @router.post("/{batch_id}/export-to-gcs")
 def export_batch_to_gcs(
     batch_id: int,
-    export_folder: str = "exports",
     completed_only: bool = Query(False),
     db: Session = Depends(get_db),
     _: User = Depends(require_lead),
 ):
-    """Export batch annotations to a GCS folder in YOLO OBB format."""
-    from app.core.gcs import is_gcs_available, upload_bytes_to_gcs, upload_file_to_gcs
+    """Export batch annotations to GCS under a folder named after the batch."""
+    import re
+    from app.core.gcs import _get_client, is_gcs_available, upload_bytes_to_gcs, upload_file_to_gcs
     from app.config import settings as app_settings
 
     if not is_gcs_available():
@@ -392,11 +392,13 @@ def export_batch_to_gcs(
     if not images:
         raise HTTPException(status_code=400, detail="No images in this batch")
 
+    # Export folder = sanitized batch name (e.g. "Test Batch 1" → "Test_Batch_1")
+    safe_name = re.sub(r'[^\w\-.]', '_', batch.name).strip('_') or f"batch_{batch_id}"
+    export_prefix = f"{safe_name}/"
+
+    # Collect class names: from predictions, completed annotations, and batch-defined classes
     predictions_all = db.query(Prediction).join(Image).filter(Image.batch_id == batch_id).all()
-    class_names = sorted(set(p.class_name for p in predictions_all))
-    if not class_names:
-        raise HTTPException(status_code=400, detail="No predictions found. Run inference first.")
-    class_to_idx = {name: idx for idx, name in enumerate(class_names)}
+    class_name_set = set(p.class_name for p in predictions_all)
 
     completed_tasks = (
         db.query(Task).join(Image)
@@ -406,13 +408,30 @@ def export_batch_to_gcs(
     task_annotations: dict[int, list] = {}
     for t in completed_tasks:
         if t.annotations_json:
-            task_annotations[t.image_id] = json.loads(t.annotations_json)
+            parsed = json.loads(t.annotations_json)
+            task_annotations[t.image_id] = parsed
+            for b in parsed:
+                if b.get("class_name"):
+                    class_name_set.add(b["class_name"])
+
+    if not class_name_set and batch.classes:
+        class_name_set = set(batch.classes)
+
+    if not class_name_set:
+        raise HTTPException(
+            status_code=400,
+            detail="No class names found. Run inference, complete annotations, or define classes first.",
+        )
+
+    class_names = sorted(class_name_set)
+    class_to_idx = {name: idx for idx, name in enumerate(class_names)}
 
     preds_by_image: dict[int, list[Prediction]] = {}
     for p in predictions_all:
         preds_by_image.setdefault(p.image_id, []).append(p)
 
-    export_prefix = f"{export_folder}/batch_{batch_id}/"
+    gcs_client = _get_client()
+    gcs_bucket = gcs_client.bucket(app_settings.GCS_BUCKET_NAME)
     exported = 0
 
     for image in images:
@@ -442,7 +461,14 @@ def export_batch_to_gcs(
         label_content = "\n".join(lines).encode()
         upload_bytes_to_gcs(label_content, f"{export_prefix}labels/{stem}.txt", "text/plain")
 
-        if image.file_path and os.path.exists(image.file_path):
+        # Images: copy within GCS if sourced from GCS, else upload from local disk
+        if image.storage_url and image.storage_url.startswith("gcs://"):
+            try:
+                blob_name = image.storage_url[len("gcs://"):]
+                gcs_bucket.copy_blob(gcs_bucket.blob(blob_name), gcs_bucket, f"{export_prefix}images/{filename}")
+            except Exception:
+                pass  # label still exported even if image copy fails
+        elif image.file_path and os.path.exists(image.file_path):
             upload_file_to_gcs(image.file_path, f"{export_prefix}images/{filename}")
 
         exported += 1
