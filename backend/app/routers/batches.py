@@ -322,7 +322,11 @@ def set_gcs_folder(
     batch.gcs_folder = folder
     db.commit()
 
-    blob_names = list_images_in_folder(folder)
+    try:
+        blob_names = list_images_in_folder(folder)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"GCS error: {exc}")
+
     if not blob_names:
         return {"gcs_folder": folder, "images_found": 0, "images_imported": 0, "message": "No images found in that GCS folder"}
 

@@ -16,7 +16,11 @@ def _get_client():
 
 
 def is_gcs_available() -> bool:
-    return bool(settings.GCS_BUCKET_NAME and settings.GCS_KEY_PATH)
+    return bool(
+        settings.GCS_BUCKET_NAME
+        and settings.GCS_KEY_PATH
+        and os.path.exists(settings.GCS_KEY_PATH)
+    )
 
 
 def list_images_in_folder(folder_prefix: str) -> list[str]:

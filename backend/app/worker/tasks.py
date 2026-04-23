@@ -94,41 +94,74 @@ def run_inference_on_batch(self, batch_id: int):
 
 
 def _infer_image(db, model, image, Prediction, ImageStatus):
+    import tempfile
     from PIL import Image as PILImage
 
-    if not os.path.exists(image.file_path):
-        logger.warning(f"Image file not found: {image.file_path}")
-        return
+    local_path = image.file_path
+    tmp = None
 
-    pil_img = PILImage.open(image.file_path)
-    img_w, img_h = pil_img.size
+    # GCS images: download to a temp file before inference
+    if image.storage_url and image.storage_url.startswith("gcs://"):
+        try:
+            from app.core.gcs import _get_client
+            from app.config import settings as app_settings
+            blob_name = image.storage_url[len("gcs://"):]
+            ext = os.path.splitext(blob_name)[1] or ".jpg"
+            tmp = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
+            tmp.close()
+            client = _get_client()
+            bucket = client.bucket(app_settings.GCS_BUCKET_NAME)
+            bucket.blob(blob_name).download_to_filename(tmp.name)
+            local_path = tmp.name
+        except Exception as e:
+            logger.error(f"Failed to download GCS image {image.storage_url}: {e}")
+            if tmp:
+                try:
+                    os.unlink(tmp.name)
+                except OSError:
+                    pass
+            return
 
-    results = model(image.file_path, verbose=False)
+    try:
+        if not os.path.exists(local_path):
+            logger.warning(f"Image file not found: {local_path}")
+            return
 
-    for result in results:
-        if result.obb is None:
-            continue
-        for i in range(len(result.obb)):
-            cls_idx = int(result.obb.cls[i].item())
-            class_name = result.names[cls_idx]
-            conf = float(result.obb.conf[i].item())
-            # xywhr: cx, cy, w, h in pixels; angle in radians
-            cx_px, cy_px, w_px, h_px, angle_rad = result.obb.xywhr[i].tolist()
+        pil_img = PILImage.open(local_path)
+        img_w, img_h = pil_img.size
 
-            pred = Prediction(
-                image_id=image.id,
-                class_name=class_name,
-                cx=cx_px / img_w,
-                cy=cy_px / img_h,
-                w=w_px / img_w,
-                h=h_px / img_h,
-                angle=math.degrees(angle_rad),
-                confidence=conf,
-            )
-            db.add(pred)
+        results = model(local_path, verbose=False)
 
-    image.status = ImageStatus.inferenced
-    db.flush()
+        for result in results:
+            if result.obb is None:
+                continue
+            for i in range(len(result.obb)):
+                cls_idx = int(result.obb.cls[i].item())
+                class_name = result.names[cls_idx]
+                conf = float(result.obb.conf[i].item())
+                # xywhr: cx, cy, w, h in pixels; angle in radians
+                cx_px, cy_px, w_px, h_px, angle_rad = result.obb.xywhr[i].tolist()
+
+                pred = Prediction(
+                    image_id=image.id,
+                    class_name=class_name,
+                    cx=cx_px / img_w,
+                    cy=cy_px / img_h,
+                    w=w_px / img_w,
+                    h=h_px / img_h,
+                    angle=math.degrees(angle_rad),
+                    confidence=conf,
+                )
+                db.add(pred)
+
+        image.status = ImageStatus.inferenced
+        db.flush()
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
 
 
 @celery_app.task
