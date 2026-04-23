@@ -108,18 +108,36 @@ def serve_image_file(
     image_id: int,
     db: Session = Depends(get_db),
 ):
-    """Serve the raw image file. Redirects to GCS signed URL if image is in GCS."""
-    from fastapi.responses import RedirectResponse
-    from app.core.gcs import generate_signed_url, is_gcs_available
+    """Serve the raw image file. Streams GCS images through the backend to avoid CORS issues."""
+    import io
+    from fastapi.responses import StreamingResponse
 
     image = db.query(Image).filter(Image.id == image_id).first()
     if not image:
         raise HTTPException(status_code=404, detail="Image not found")
 
-    if image.storage_url and image.storage_url.startswith("gcs://") and is_gcs_available():
-        blob_name = image.storage_url[len("gcs://"):]
-        signed_url = generate_signed_url(blob_name)
-        return RedirectResponse(url=signed_url)
+    if image.storage_url and image.storage_url.startswith("gcs://"):
+        from app.core.gcs import _get_client, is_gcs_available
+        from app.config import settings as app_settings
+
+        if not is_gcs_available():
+            raise HTTPException(status_code=400, detail="GCS not configured")
+        try:
+            blob_name = image.storage_url[len("gcs://"):]
+            client = _get_client()
+            bucket = client.bucket(app_settings.GCS_BUCKET_NAME)
+            buf = io.BytesIO()
+            bucket.blob(blob_name).download_to_file(buf)
+            buf.seek(0)
+            ext = os.path.splitext(blob_name)[1].lower()
+            media_types = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
+            return StreamingResponse(
+                buf,
+                media_type=media_types.get(ext, "image/jpeg"),
+                headers={"Cache-Control": "max-age=3600"},
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"GCS error: {e}")
 
     if not os.path.exists(image.file_path):
         raise HTTPException(status_code=404, detail="Image file not found on disk")
