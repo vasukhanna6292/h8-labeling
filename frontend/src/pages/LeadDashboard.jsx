@@ -29,6 +29,9 @@ export default function LeadDashboard() {
   const [batchClasses, setBatchClasses] = useState([])
   const [newClassName, setNewClassName] = useState('')
   const [yamlUploading, setYamlUploading] = useState(false)
+  const [gcsFolder, setGcsFolder] = useState('')
+  const [gcsLinking, setGcsLinking] = useState(false)
+  const [exportingToGcs, setExportingToGcs] = useState(false)
   const modelFileRef = useRef()
   const fileRef = useRef()
   const yamlFileRef = useRef()
@@ -58,11 +61,42 @@ export default function LeadDashboard() {
     return () => clearInterval(interval)
   }, [selectedBatch?.id, selectedBatch?.status])
 
+  async function linkGcsFolder() {
+    if (!gcsFolder.trim() || !selectedBatch) return
+    setGcsLinking(true)
+    setMsg('')
+    try {
+      const res = await apiPost(`/batches/${selectedBatch.id}/set-gcs-folder?folder=${encodeURIComponent(gcsFolder.trim())}`)
+      setMsg(`✓ GCS folder linked — ${res.images_imported} images imported (${res.images_found} found)`)
+      const imgs = await apiGet(`/images/batches/${selectedBatch.id}`)
+      setImages(imgs)
+      setNewlyUploadedCount(res.images_imported)
+    } catch (err) {
+      setMsg(`Error: ${err.message}`)
+    } finally {
+      setGcsLinking(false)
+    }
+  }
+
+  async function exportToGcs(completedOnly = false) {
+    setExportingToGcs(true)
+    setMsg('')
+    try {
+      const res = await apiPost(`/batches/${selectedBatch.id}/export-to-gcs?completed_only=${completedOnly}`)
+      setMsg(`✓ Exported ${res.exported} images to GCS: ${res.gcs_path}`)
+    } catch (err) {
+      setMsg(`Error: ${err.message}`)
+    } finally {
+      setExportingToGcs(false)
+    }
+  }
+
   async function loadBatch(batch) {
     setSelectedBatch(batch)
     setMsg('')
     setNewlyUploadedCount(0)
     setBatchClasses([])
+    setGcsFolder(batch.gcs_folder || '')
     const [imgs, prog, stats, classes] = await Promise.all([
       apiGet(`/images/batches/${batch.id}`),
       apiGet(`/batches/${batch.id}/progress`),
@@ -385,6 +419,30 @@ export default function LeadDashboard() {
                 </div>
               </div>
 
+              {/* GCS Folder */}
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                <h3 className="text-sm font-semibold text-gray-300 mb-1">GCS Image Source</h3>
+                <p className="text-xs text-gray-500 mb-3">Link a Google Cloud Storage folder to load images from GCS. Or use local upload above for small batches.</p>
+                <div className="flex gap-2 mb-2">
+                  <input
+                    value={gcsFolder}
+                    onChange={e => setGcsFolder(e.target.value)}
+                    placeholder="e.g. images/batch1/"
+                    className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500 font-mono"
+                  />
+                  <button
+                    onClick={linkGcsFolder}
+                    disabled={gcsLinking || !gcsFolder.trim()}
+                    className="bg-blue-700 hover:bg-blue-600 disabled:opacity-50 text-white text-sm px-4 py-1.5 rounded transition"
+                  >
+                    {gcsLinking ? 'Linking...' : '🔗 Link & Import'}
+                  </button>
+                </div>
+                {selectedBatch?.gcs_folder && (
+                  <p className="text-xs text-green-500">✓ Linked: gs://h8-labeling-data/{selectedBatch.gcs_folder}</p>
+                )}
+              </div>
+
               {/* Classes */}
               <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
                 <h3 className="text-sm font-semibold text-gray-300 mb-1">Classes</h3>
@@ -601,7 +659,7 @@ export default function LeadDashboard() {
               {/* Export */}
               <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
                 <h3 className="text-sm font-semibold text-gray-300 mb-3">Export Dataset (YOLO OBB)</h3>
-                <div className="flex gap-3">
+                <div className="flex flex-wrap gap-3">
                   <button
                     onClick={() => handleExport(false)}
                     disabled={exporting}
@@ -616,10 +674,23 @@ export default function LeadDashboard() {
                   >
                     {exporting ? '⏳ Exporting...' : '⬇ Completed Only'}
                   </button>
+                  <button
+                    onClick={() => exportToGcs(false)}
+                    disabled={exportingToGcs}
+                    className="bg-blue-700 hover:bg-blue-600 disabled:opacity-50 text-white text-sm px-4 py-2 rounded-lg transition"
+                  >
+                    {exportingToGcs ? '⏳ Pushing...' : '☁ Push All to GCS'}
+                  </button>
+                  <button
+                    onClick={() => exportToGcs(true)}
+                    disabled={exportingToGcs}
+                    className="bg-blue-900 hover:bg-blue-800 disabled:opacity-50 text-white text-sm px-4 py-2 rounded-lg transition"
+                  >
+                    {exportingToGcs ? '⏳ Pushing...' : '☁ Push Completed to GCS'}
+                  </button>
                 </div>
                 <p className="text-xs text-gray-500 mt-2">
-                  All: every inferenced image (reviewed boxes where available, raw predictions otherwise).<br/>
-                  Completed Only: images marked as done by annotators, using their reviewed boxes.
+                  Download: saves zip locally. Push to GCS: writes labels + data.yaml to your GCS bucket for retraining on Sol.
                 </p>
               </div>
 

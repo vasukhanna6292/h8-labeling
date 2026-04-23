@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str = ""
     SMTP_FROM: str = ""
     APP_URL: str = "http://localhost:3000"
+    GCS_BUCKET_NAME: str = ""
+    GCS_KEY_PATH: str = ""
 
     class Config:
         env_file = ".env"

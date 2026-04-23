@@ -13,6 +13,7 @@ class BatchRead(BaseModel):
     status: BatchStatus
     created_at: datetime
     classes: list[str] | None = None
+    gcs_folder: str | None = None
 
     class Config:
         from_attributes = True

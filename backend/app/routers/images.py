@@ -108,10 +108,19 @@ def serve_image_file(
     image_id: int,
     db: Session = Depends(get_db),
 ):
-    """Serve the raw image file for display in the annotation canvas."""
+    """Serve the raw image file. Redirects to GCS signed URL if image is in GCS."""
+    from fastapi.responses import RedirectResponse
+    from app.core.gcs import generate_signed_url, is_gcs_available
+
     image = db.query(Image).filter(Image.id == image_id).first()
     if not image:
         raise HTTPException(status_code=404, detail="Image not found")
+
+    if image.storage_url and image.storage_url.startswith("gcs://") and is_gcs_available():
+        blob_name = image.storage_url[len("gcs://"):]
+        signed_url = generate_signed_url(blob_name)
+        return RedirectResponse(url=signed_url)
+
     if not os.path.exists(image.file_path):
         raise HTTPException(status_code=404, detail="Image file not found on disk")
     return FileResponse(image.file_path)

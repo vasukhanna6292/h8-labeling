@@ -300,6 +300,159 @@ def batch_progress(
     }
 
 
+@router.post("/{batch_id}/set-gcs-folder")
+def set_gcs_folder(
+    batch_id: int,
+    folder: str,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_lead),
+):
+    """Set GCS folder prefix for a batch and import image records from it."""
+    from app.core.gcs import is_gcs_available, list_images_in_folder
+    from app.models.image import Image, ImageStatus
+
+    if not is_gcs_available():
+        raise HTTPException(status_code=400, detail="GCS is not configured on this server")
+
+    batch = db.query(Batch).filter(Batch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    folder = folder.strip().rstrip("/") + "/"
+    batch.gcs_folder = folder
+    db.commit()
+
+    blob_names = list_images_in_folder(folder)
+    if not blob_names:
+        return {"gcs_folder": folder, "images_found": 0, "images_imported": 0, "message": "No images found in that GCS folder"}
+
+    imported = 0
+    for blob_name in blob_names:
+        existing = db.query(Image).filter(Image.storage_url == f"gcs://{blob_name}").first()
+        if not existing:
+            image = Image(
+                batch_id=batch_id,
+                file_path=blob_name,
+                storage_url=f"gcs://{blob_name}",
+                status=ImageStatus.uploaded,
+            )
+            db.add(image)
+            imported += 1
+
+    db.commit()
+    return {"gcs_folder": folder, "images_found": len(blob_names), "images_imported": imported}
+
+
+@router.get("/{batch_id}/gcs-image-url/{image_id}")
+def get_gcs_image_url(
+    batch_id: int,
+    image_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Get a signed URL for a GCS image valid for 60 minutes."""
+    from app.core.gcs import generate_signed_url
+    from app.models.image import Image
+
+    image = db.query(Image).filter(Image.id == image_id, Image.batch_id == batch_id).first()
+    if not image:
+        raise HTTPException(status_code=404, detail="Image not found")
+    if not image.storage_url or not image.storage_url.startswith("gcs://"):
+        raise HTTPException(status_code=400, detail="Image is not stored in GCS")
+
+    blob_name = image.storage_url[len("gcs://"):]
+    url = generate_signed_url(blob_name)
+    return {"url": url}
+
+
+@router.post("/{batch_id}/export-to-gcs")
+def export_batch_to_gcs(
+    batch_id: int,
+    export_folder: str = "exports",
+    completed_only: bool = Query(False),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_lead),
+):
+    """Export batch annotations to a GCS folder in YOLO OBB format."""
+    from app.core.gcs import is_gcs_available, upload_bytes_to_gcs, upload_file_to_gcs
+    from app.config import settings as app_settings
+
+    if not is_gcs_available():
+        raise HTTPException(status_code=400, detail="GCS is not configured on this server")
+
+    batch = db.query(Batch).filter(Batch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    images = db.query(Image).filter(Image.batch_id == batch_id).all()
+    if not images:
+        raise HTTPException(status_code=400, detail="No images in this batch")
+
+    predictions_all = db.query(Prediction).join(Image).filter(Image.batch_id == batch_id).all()
+    class_names = sorted(set(p.class_name for p in predictions_all))
+    if not class_names:
+        raise HTTPException(status_code=400, detail="No predictions found. Run inference first.")
+    class_to_idx = {name: idx for idx, name in enumerate(class_names)}
+
+    completed_tasks = (
+        db.query(Task).join(Image)
+        .filter(Image.batch_id == batch_id, Task.status == TaskStatus.completed)
+        .all()
+    )
+    task_annotations: dict[int, list] = {}
+    for t in completed_tasks:
+        if t.annotations_json:
+            task_annotations[t.image_id] = json.loads(t.annotations_json)
+
+    preds_by_image: dict[int, list[Prediction]] = {}
+    for p in predictions_all:
+        preds_by_image.setdefault(p.image_id, []).append(p)
+
+    export_prefix = f"{export_folder}/batch_{batch_id}/"
+    exported = 0
+
+    for image in images:
+        filename = os.path.basename(image.file_path)
+        stem = os.path.splitext(filename)[0]
+
+        if image.id in task_annotations:
+            boxes = task_annotations[image.id]
+            lines = []
+            for b in boxes:
+                idx = class_to_idx.get(b.get("class_name", ""), 0)
+                corners = _obb_to_corners(b["cx"], b["cy"], b["w"], b["h"], b["angle"])
+                pts = " ".join(f"{x:.6f} {y:.6f}" for x, y in corners)
+                lines.append(f"{idx} {pts}")
+        elif completed_only:
+            continue
+        elif image.id in preds_by_image:
+            lines = []
+            for p in preds_by_image[image.id]:
+                idx = class_to_idx.get(p.class_name, 0)
+                corners = _obb_to_corners(p.cx, p.cy, p.w, p.h, p.angle)
+                pts = " ".join(f"{x:.6f} {y:.6f}" for x, y in corners)
+                lines.append(f"{idx} {pts}")
+        else:
+            continue
+
+        label_content = "\n".join(lines).encode()
+        upload_bytes_to_gcs(label_content, f"{export_prefix}labels/{stem}.txt", "text/plain")
+
+        if image.file_path and os.path.exists(image.file_path):
+            upload_file_to_gcs(image.file_path, f"{export_prefix}images/{filename}")
+
+        exported += 1
+
+    names_str = "[" + ", ".join(class_names) + "]"
+    data_yaml = f"path: .\ntrain: images\nval: images\nnc: {len(class_names)}\nnames: {names_str}\n"
+    upload_bytes_to_gcs(data_yaml.encode(), f"{export_prefix}data.yaml", "text/plain")
+
+    return {
+        "exported": exported,
+        "gcs_path": f"gs://{app_settings.GCS_BUCKET_NAME}/{export_prefix}",
+    }
+
+
 @router.post("/{batch_id}/trigger-inference", status_code=status.HTTP_202_ACCEPTED)
 def trigger_inference(
     batch_id: int,
