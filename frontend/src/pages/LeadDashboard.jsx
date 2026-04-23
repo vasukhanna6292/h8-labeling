@@ -33,8 +33,13 @@ export default function LeadDashboard() {
   const [gcsLinking, setGcsLinking] = useState(false)
   const [exportingToGcs, setExportingToGcs] = useState(false)
   const [showInferenceModal, setShowInferenceModal] = useState(false)
+  const [inferenceWeights, setInferenceWeights] = useState('existing')
+  const [inferenceTarget, setInferenceTarget] = useState('cpu')
+  const [inferenceStep, setInferenceStep] = useState('options') // 'options' | 'sol-cmd'
+  const [solCopied, setSolCopied] = useState(false)
   const [startingScratch, setStartingScratch] = useState(false)
   const modelFileRef = useRef()
+  const inferenceFileRef = useRef()
   const fileRef = useRef()
   const yamlFileRef = useRef()
 
@@ -154,9 +159,50 @@ export default function LeadDashboard() {
     }
   }
 
-  async function handleUploadAndRun(e) {
+  function cpuEst(n) {
+    const s = n * 25
+    if (s < 60) return `~${s}s`
+    if (s < 3600) return `~${Math.round(s / 60)}min`
+    return `~${(s / 3600).toFixed(1)}h`
+  }
+
+  function solEst(n) {
+    const s = Math.max(120, Math.round(n * 0.5) + 120)
+    return `~${Math.ceil(s / 60)}min`
+  }
+
+  function getSolCommand() {
+    const apiUrl = (import.meta.env.VITE_API_URL || `${window.location.origin}/api`).replace(/\/$/, '')
+    const token = localStorage.getItem('token') || '<paste-your-token>'
+    return `python3 sol_infer.py \\\n  --batch-id ${selectedBatch?.id} \\\n  --api-url ${apiUrl} \\\n  --api-token ${token} \\\n  --model-path /path/to/best.pt \\\n  --gcs-bucket h8-labeling-data2 \\\n  --gcs-key /path/to/gcs-key.json`
+  }
+
+  function openInferenceModal() {
+    setInferenceStep('options')
+    setInferenceWeights('existing')
+    setInferenceTarget('cpu')
+    setSolCopied(false)
+    setMsg('')
+    setShowInferenceModal(true)
+  }
+
+  async function handleRunInference() {
+    if (inferenceWeights === 'upload') {
+      inferenceFileRef.current.click()
+      return
+    }
+    if (inferenceTarget === 'sol') {
+      setInferenceStep('sol-cmd')
+      return
+    }
+    setShowInferenceModal(false)
+    await triggerInference()
+  }
+
+  async function handleInferenceFileSelected(e) {
     const file = e.target.files[0]
     if (!file) return
+    inferenceFileRef.current.value = ''
     setShowInferenceModal(false)
     setModelUploadProgress(0)
     setModelMsg('')
@@ -168,12 +214,16 @@ export default function LeadDashboard() {
       setModelMsg(`✓ Model updated (${result.size_mb} MB)`)
       const info = await getCurrentModel()
       setModelInfo(info)
-      await triggerInference()
+      if (inferenceTarget === 'cpu') {
+        await triggerInference()
+      } else {
+        setInferenceStep('sol-cmd')
+        setShowInferenceModal(true)
+      }
     } catch (err) {
       setMsg(`Error: ${err.message}`)
     } finally {
       setModelUploadProgress(null)
-      modelFileRef.current.value = ''
     }
   }
 
@@ -538,7 +588,7 @@ export default function LeadDashboard() {
                 <p className="text-xs text-gray-500 mb-4">Run the model to pre-populate boxes, or assign images directly for manual annotation from scratch.</p>
                 <div className="flex gap-3 flex-wrap">
                   <button
-                    onClick={() => { setMsg(''); setShowInferenceModal(true) }}
+                    onClick={openInferenceModal}
                     disabled={selectedBatch.status === 'processing' || images.length === 0}
                     className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm px-4 py-2 rounded-lg transition"
                   >
@@ -573,37 +623,89 @@ export default function LeadDashboard() {
                 })()}
               </div>
 
+              {/* Hidden file input for model upload-and-run */}
+              <input ref={inferenceFileRef} type="file" accept=".pt" className="hidden" onChange={handleInferenceFileSelected} />
+
               {/* Inference modal */}
               {showInferenceModal && (
                 <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50" onClick={() => setShowInferenceModal(false)}>
-                  <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 w-full max-w-sm mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
-                    <h3 className="text-white font-semibold mb-1">Run Inferences</h3>
-                    <p className="text-gray-400 text-sm mb-5">Which model weights do you want to use?</p>
-                    <div className="space-y-3">
-                      <button
-                        onClick={() => { setShowInferenceModal(false); triggerInference() }}
-                        className="w-full bg-purple-600 hover:bg-purple-700 text-white text-sm px-4 py-3 rounded-lg transition text-left flex items-center gap-3"
-                      >
-                        <span className="text-xl">⚡</span>
-                        <div>
-                          <div className="font-medium">Use existing model</div>
-                          <div className="text-xs text-purple-300 mt-0.5">
-                            {modelInfo ? `${modelInfo.size_mb} MB · updated ${new Date(modelInfo.last_modified).toLocaleDateString()}` : 'Current best.pt'}
+                  <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 w-full max-w-md mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+
+                    {inferenceStep === 'options' ? (<>
+                      <h3 className="text-white font-semibold mb-5">Run Inferences</h3>
+
+                      {/* Model weights */}
+                      <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Model Weights</p>
+                      <div className="space-y-2 mb-5">
+                        {[
+                          { value: 'existing', label: 'Use existing model', desc: modelInfo ? `${modelInfo.size_mb} MB · updated ${new Date(modelInfo.last_modified).toLocaleDateString()}` : 'Current best.pt' },
+                          { value: 'upload', label: 'Upload new best.pt', desc: 'Replace current weights before running' },
+                        ].map(opt => (
+                          <label key={opt.value} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition ${inferenceWeights === opt.value ? 'border-purple-500 bg-purple-950/40' : 'border-gray-700 hover:border-gray-600'}`}>
+                            <input type="radio" name="inf-weights" value={opt.value} checked={inferenceWeights === opt.value} onChange={() => setInferenceWeights(opt.value)} className="mt-0.5 accent-purple-500" />
+                            <div>
+                              <div className="text-sm text-white font-medium">{opt.label}</div>
+                              <div className="text-xs text-gray-400 mt-0.5">{opt.desc}</div>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+
+                      {/* Run location */}
+                      <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Where to Run</p>
+                      <div className="space-y-2 mb-6">
+                        <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition ${inferenceTarget === 'cpu' ? 'border-purple-500 bg-purple-950/40' : 'border-gray-700 hover:border-gray-600'}`}>
+                          <input type="radio" name="inf-target" value="cpu" checked={inferenceTarget === 'cpu'} onChange={() => setInferenceTarget('cpu')} className="mt-0.5 accent-purple-500" />
+                          <div>
+                            <div className="text-sm text-white font-medium">CPU (local) <span className="text-xs text-gray-500 font-normal">— best for &lt;500 images</span></div>
+                            <div className="text-xs text-gray-400 mt-0.5">{images.length} images · est. {cpuEst(images.length)} · runs on this server</div>
                           </div>
-                        </div>
-                      </button>
-                      <label className="w-full bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white text-sm px-4 py-3 rounded-lg transition cursor-pointer flex items-center gap-3">
-                        <span className="text-xl">⬆</span>
-                        <div>
-                          <div className="font-medium">Upload new model & run</div>
-                          <div className="text-xs text-gray-400 mt-0.5">Replace best.pt, then start inference</div>
-                        </div>
-                        <input type="file" accept=".pt" className="hidden" onChange={handleUploadAndRun} />
-                      </label>
-                    </div>
-                    <button onClick={() => setShowInferenceModal(false)} className="mt-4 w-full text-sm text-gray-500 hover:text-gray-300 py-1 transition">
-                      Cancel
-                    </button>
+                        </label>
+                        <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition ${inferenceTarget === 'sol' ? 'border-orange-500 bg-orange-950/30' : 'border-gray-700 hover:border-gray-600'}`}>
+                          <input type="radio" name="inf-target" value="sol" checked={inferenceTarget === 'sol'} onChange={() => setInferenceTarget('sol')} className="mt-0.5 accent-orange-500" />
+                          <div>
+                            <div className="text-sm text-white font-medium">Sol GPU <span className="text-xs text-gray-500 font-normal">(ASU A100) — best for 500+ images</span></div>
+                            <div className="text-xs text-gray-400 mt-0.5">{images.length} images · est. {solEst(images.length)} · requires Sol access</div>
+                          </div>
+                        </label>
+                      </div>
+
+                      <div className="flex gap-3">
+                        <button onClick={() => setShowInferenceModal(false)} className="flex-1 text-sm text-gray-400 hover:text-gray-200 py-2 transition">Cancel</button>
+                        <button onClick={handleRunInference} className={`flex-1 text-white text-sm px-4 py-2 rounded-lg transition ${inferenceTarget === 'sol' ? 'bg-orange-600 hover:bg-orange-700' : 'bg-purple-600 hover:bg-purple-700'}`}>
+                          {inferenceTarget === 'sol' ? 'Get Sol Command →' : 'Run →'}
+                        </button>
+                      </div>
+                    </>) : (<>
+                      {/* Sol command step */}
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xl">🔥</span>
+                        <h3 className="text-white font-semibold">Sol GPU Job</h3>
+                      </div>
+                      <p className="text-gray-400 text-sm mb-4">Copy this command and run it on ASU Sol. Predictions will appear in the app automatically as they complete.</p>
+
+                      <div className="relative bg-gray-950 border border-gray-700 rounded-lg p-3 mb-3">
+                        <pre className="text-xs text-green-300 whitespace-pre-wrap break-all font-mono leading-relaxed">{getSolCommand()}</pre>
+                        <button
+                          onClick={() => { navigator.clipboard.writeText(getSolCommand()); setSolCopied(true); setTimeout(() => setSolCopied(false), 2000) }}
+                          className="absolute top-2 right-2 text-xs text-gray-500 hover:text-white border border-gray-700 px-2 py-0.5 rounded transition"
+                        >{solCopied ? '✓ Copied' : 'Copy'}</button>
+                      </div>
+
+                      <div className="text-xs text-gray-500 space-y-1 mb-5 border border-gray-800 rounded-lg p-3">
+                        <p className="text-gray-400 font-medium mb-1">Steps on Sol:</p>
+                        <p>1. <code className="text-gray-300">ssh [netid]@login.sol.rc.asu.edu</code></p>
+                        <p>2. <code className="text-gray-300">pip install ultralytics google-cloud-storage requests pillow</code></p>
+                        <p>3. Copy <code className="text-gray-300">sol_infer.py</code> from the repo to Sol</p>
+                        <p>4. Paste and run the command above</p>
+                        <p>5. Progress appears here automatically</p>
+                      </div>
+
+                      <div className="flex gap-3">
+                        <button onClick={() => setInferenceStep('options')} className="text-sm text-gray-400 hover:text-gray-200 px-3 py-2 transition">← Back</button>
+                        <button onClick={() => setShowInferenceModal(false)} className="flex-1 bg-gray-700 hover:bg-gray-600 text-white text-sm px-4 py-2 rounded-lg transition">Done</button>
+                      </div>
+                    </>)}
                   </div>
                 </div>
               )}

@@ -510,6 +510,21 @@ def start_scratch(
     return {"detail": f"{len(images)} images ready for annotation", "images_count": len(images)}
 
 
+@router.post("/{batch_id}/finalize-sol", status_code=status.HTTP_200_OK)
+def finalize_sol_job(
+    batch_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_lead),
+):
+    """Called by the Sol inference script after all predictions have been uploaded."""
+    batch = db.query(Batch).filter(Batch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    batch.status = BatchStatus.done
+    db.commit()
+    return {"detail": "Batch finalized", "batch_id": batch_id, "status": "done"}
+
+
 @router.post("/{batch_id}/trigger-inference", status_code=status.HTTP_202_ACCEPTED)
 def trigger_inference(
     batch_id: int,

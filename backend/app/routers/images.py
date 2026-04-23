@@ -1,19 +1,32 @@
 import os
 import shutil
+from typing import List
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.core.dependencies import get_current_user, require_lead
 from app.database import get_db
 from app.models.batch import Batch, BatchStatus
-from app.models.image import Image
+from app.models.image import Image, ImageStatus
 from app.models.prediction import Prediction
 from app.models.task import Task
 from app.models.user import User
 from app.schemas.image import ImageRead
+
+
+class PredictionInput(BaseModel):
+    class_name: str
+    cx: float
+    cy: float
+    w: float
+    h: float
+    angle: float
+    confidence: float = 1.0
+
 
 router = APIRouter()
 
@@ -142,3 +155,30 @@ def serve_image_file(
     if not os.path.exists(image.file_path):
         raise HTTPException(status_code=404, detail="Image file not found on disk")
     return FileResponse(image.file_path)
+
+
+@router.post("/{image_id}/predictions", status_code=status.HTTP_201_CREATED)
+def upload_predictions(
+    image_id: int,
+    predictions: List[PredictionInput],
+    db: Session = Depends(get_db),
+    _: User = Depends(require_lead),
+):
+    """Receive predictions from an external inference job (e.g. Sol GPU script)."""
+    image = db.query(Image).filter(Image.id == image_id).first()
+    if not image:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    db.query(Prediction).filter(Prediction.image_id == image_id).delete()
+    for p in predictions:
+        db.add(Prediction(
+            image_id=image_id,
+            class_name=p.class_name,
+            cx=p.cx, cy=p.cy,
+            w=p.w, h=p.h,
+            angle=p.angle,
+            confidence=p.confidence,
+        ))
+    image.status = ImageStatus.inferenced
+    db.commit()
+    return {"image_id": image_id, "predictions_saved": len(predictions)}
