@@ -5,6 +5,22 @@ import { useNavigate } from 'react-router-dom'
 
 const BOX_COLORS = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F', '#82E0AA', '#F1948A']
 
+function copyToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text)
+  }
+  // HTTP fallback using a temporary textarea
+  const el = document.createElement('textarea')
+  el.value = text
+  el.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0'
+  document.body.appendChild(el)
+  el.focus()
+  el.select()
+  document.execCommand('copy')
+  document.body.removeChild(el)
+  return Promise.resolve()
+}
+
 export default function LeadDashboard() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
@@ -688,7 +704,7 @@ export default function LeadDashboard() {
                       <div className="relative bg-gray-950 border border-gray-700 rounded-lg p-3 mb-3">
                         <pre className="text-xs text-green-300 whitespace-pre-wrap break-all font-mono leading-relaxed">{getSolCommand()}</pre>
                         <button
-                          onClick={() => { navigator.clipboard.writeText(getSolCommand()); setSolCopied(true); setTimeout(() => setSolCopied(false), 2000) }}
+                          onClick={() => { copyToClipboard(getSolCommand()); setSolCopied(true); setTimeout(() => setSolCopied(false), 2000) }}
                           className="absolute top-2 right-2 text-xs text-gray-500 hover:text-white border border-gray-700 px-2 py-0.5 rounded transition"
                         >{solCopied ? '✓ Copied' : 'Copy'}</button>
                       </div>
@@ -813,7 +829,7 @@ export default function LeadDashboard() {
                     <div className="flex items-center gap-2">
                       <code className="flex-1 text-xs text-green-300 break-all">{inviteLink}</code>
                       <button
-                        onClick={() => { navigator.clipboard.writeText(inviteLink); }}
+                        onClick={() => { copyToClipboard(inviteLink); }}
                         className="shrink-0 text-xs text-gray-400 hover:text-white border border-gray-600 px-2 py-1 rounded transition"
                       >
                         Copy
