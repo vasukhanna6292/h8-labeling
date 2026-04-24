@@ -116,7 +116,7 @@ def main():
 
     for i, img_data in enumerate(images, 1):
         image_id = img_data["id"]
-        storage_url = img_data.get("storage_url", "")
+        storage_url = img_data.get("storage_url") or ""
         print(f"[{i}/{len(images)}] image_id={image_id} ...", end=" ", flush=True)
 
         if not storage_url.startswith("gcs://"):
