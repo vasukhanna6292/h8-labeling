@@ -174,7 +174,7 @@ export default function LeadDashboard() {
   function getSolCommand() {
     const apiUrl = (import.meta.env.VITE_API_URL || `${window.location.origin}/api`).replace(/\/$/, '')
     const token = localStorage.getItem('token') || '<paste-your-token>'
-    return `python3 sol_infer.py \\\n  --batch-id ${selectedBatch?.id} \\\n  --api-url ${apiUrl} \\\n  --api-token ${token} \\\n  --model-path /path/to/best.pt \\\n  --gcs-bucket h8-labeling-data2 \\\n  --gcs-key /path/to/gcs-key.json`
+    return `python3 /scratch/vkhann13/h8-labeling/sol_infer.py \\\n  --batch-id ${selectedBatch?.id} \\\n  --api-url ${apiUrl} \\\n  --api-token ${token} \\\n  --model-path /scratch/vkhann13/h8-labeling/best.pt \\\n  --gcs-bucket h8-labeling-data2 \\\n  --gcs-key /scratch/vkhann13/h8-labeling/gcs-key.json`
   }
 
   function openInferenceModal() {
