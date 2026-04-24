@@ -119,18 +119,29 @@ def main():
         storage_url = img_data.get("storage_url") or ""
         print(f"[{i}/{len(images)}] image_id={image_id} ...", end=" ", flush=True)
 
-        if not storage_url.startswith("gcs://"):
-            print("SKIP (not a GCS image)")
-            continue
-
-        blob_name = storage_url[len("gcs://"):]
-        ext = os.path.splitext(blob_name)[1] or ".jpg"
+        ext = ".jpg"
+        if storage_url.startswith("gcs://"):
+            ext = os.path.splitext(storage_url)[1] or ".jpg"
 
         with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
             tmp_path = tmp.name
 
         try:
-            bucket.blob(blob_name).download_to_filename(tmp_path)
+            if storage_url.startswith("gcs://"):
+                blob_name = storage_url[len("gcs://"):]
+                bucket.blob(blob_name).download_to_filename(tmp_path)
+            else:
+                # Download local images through the API
+                img_resp = requests.get(
+                    f"{api}/images/{image_id}/file",
+                    headers=headers,
+                    timeout=60,
+                    stream=True,
+                )
+                img_resp.raise_for_status()
+                with open(tmp_path, "wb") as f:
+                    for chunk in img_resp.iter_content(chunk_size=8192):
+                        f.write(chunk)
 
             pil_img = PILImage.open(tmp_path)
             img_w, img_h = pil_img.size
