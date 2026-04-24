@@ -332,7 +332,7 @@ def set_gcs_folder(
 
     imported = 0
     for blob_name in blob_names:
-        existing = db.query(Image).filter(Image.storage_url == f"gcs://{blob_name}").first()
+        existing = db.query(Image).filter(Image.batch_id == batch_id, Image.storage_url == f"gcs://{blob_name}").first()
         if not existing:
             image = Image(
                 batch_id=batch_id,
