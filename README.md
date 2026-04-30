@@ -2,7 +2,7 @@
 
 A collaborative oriented bounding box (OBB) annotation platform built for part-based explainable AI (XAI) image labeling. The platform uses a trained YOLOv11 model to automatically pre-populate bounding boxes on images, allowing human annotators to focus only on inspection and correction — reducing annotation time by ~80%.
 
-**Live:** http://h8labeling.duckdns.org
+**Live:** https://h8labeling.com
 
 ---
 
@@ -10,11 +10,11 @@ A collaborative oriented bounding box (OBB) annotation platform built for part-b
 
 Instead of drawing every bounding box from scratch:
 
-1. Lead uploads a batch of images
-2. YOLOv11 model automatically runs inference and pre-populates all bounding boxes
-3. Tasks are distributed equally among 10 annotators
+1. Lead uploads a batch of images (locally or from Google Cloud Storage)
+2. YOLOv11 model automatically runs inference — on CPU or ASU Sol A100 GPU
+3. Tasks are distributed equally among annotators
 4. Annotators inspect, rotate, resize, or delete boxes using an interactive canvas
-5. Lead exports the final labeled dataset in YOLO OBB format for model retraining
+5. Lead exports the final labeled dataset in YOLO OBB format directly to GCS for model retraining
 
 ---
 
@@ -23,14 +23,17 @@ Instead of drawing every bounding box from scratch:
 | Feature | Description |
 |---------|-------------|
 | JWT Auth | Secure login with two roles: Lead and Annotator |
-| Invite System | Lead generates invite links for team members |
-| AI Inference | YOLOv11 auto-populates bounding boxes on upload |
-| OBB Canvas | Drag, rotate, resize oriented bounding boxes in browser |
+| Invite System | Lead generates single-use invite links for team members |
+| AI Inference (CPU) | YOLOv11 runs on server CPU via Celery worker |
+| AI Inference (Sol GPU) | YOLOv11 runs on ASU Sol A100 GPU via external script |
+| Start from Scratch | Skip inference and annotate images manually from blank canvas |
+| GCS Integration | Link a GCS folder to import images directly from Google Cloud Storage |
+| OBB Canvas | Drag, rotate, resize oriented bounding boxes in browser (Konva.js) |
 | Task Queue | Round-robin distribution of images across annotators |
 | Progress Tracking | Real-time view of completed/pending tasks per annotator |
-| YOLO Export | One-click export in YOLO OBB format (images/labels/data.yaml) |
+| GCS Export | One-click export to GCS in YOLO OBB format (images/labels/data.yaml) |
 | Model Upload | Lead can hot-swap the inference model without restarting |
-| Cloud Watcher | Auto-detects new images from S3/GCP cloud storage |
+| Auto Weight Sync | Sol script auto-downloads latest weights from server before each run |
 
 ---
 
@@ -46,7 +49,10 @@ Instead of drawing every bounding box from scratch:
 | Styling | Tailwind CSS |
 | Reverse Proxy | Nginx |
 | Deployment | Docker Compose |
-| Server | Oracle Cloud Ubuntu 22.04 |
+| Server | DigitalOcean Ubuntu 24.04 (s-2vcpu-4gb, ~$24/month) |
+| Image Storage | Google Cloud Storage (h8-labeling-data2) |
+| GPU Inference | ASU Sol HPC — NVIDIA A100 |
+| SSL | Let's Encrypt (auto-renewing) |
 
 ---
 
@@ -56,7 +62,7 @@ Instead of drawing every bounding box from scratch:
 annotation-agent/
 ├── backend/
 │   ├── app/
-│   │   ├── core/          # Auth, dependencies, email
+│   │   ├── core/          # Auth, dependencies, GCS client
 │   │   ├── models/        # SQLAlchemy DB models
 │   │   ├── routers/       # API endpoints
 │   │   ├── schemas/       # Pydantic schemas
@@ -82,9 +88,12 @@ annotation-agent/
 │   │   └── App.jsx
 │   ├── Dockerfile
 │   └── package.json
+├── scripts/
+│   └── sol_infer.py       # ASU Sol GPU inference script
 ├── docker-compose.yml
 ├── nginx.conf
 ├── .env.example
+├── DOCUMENTATION.md       # Full user documentation
 └── README.md
 ```
 
@@ -99,7 +108,7 @@ annotation-agent/
 ### 1. Clone the repo
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/h8-labeling.git
+git clone https://github.com/vasukhanna6292/h8-labeling.git
 cd h8-labeling
 ```
 
@@ -121,6 +130,10 @@ POSTGRES_PASSWORD=admin123
 POSTGRES_DB=annotation_db
 APP_URL=http://localhost:3000
 VITE_API_URL=http://localhost:8000
+
+# Google Cloud Storage (optional for local dev)
+GCS_BUCKET_NAME=your-gcs-bucket
+GCS_KEY_PATH=/run/secrets/gcs-key.json
 ```
 
 Generate a secret key:
@@ -170,18 +183,20 @@ print('Lead created')
 
 ---
 
-## Deployment (Oracle Cloud)
+## Deployment (DigitalOcean)
 
-This app is deployed on Oracle Cloud Free Tier — completely free forever.
+This app is deployed on a DigitalOcean droplet with HTTPS via Let's Encrypt.
 
 ### Infrastructure
 
 | Resource | Spec | Cost |
 |----------|------|------|
-| VM | Oracle Cloud Ubuntu 22.04 | $0 |
-| Database | PostgreSQL on block storage | $0 |
-| Domain | DuckDNS subdomain | $0 |
-| **Total** | | **$0/month** |
+| VM | DigitalOcean s-2vcpu-4gb Ubuntu 24.04 | ~$24/month |
+| Image Storage | Google Cloud Storage | ~$8-15/month |
+| Domain | h8labeling.com (Namecheap) | ~$1/month |
+| SSL | Let's Encrypt | Free |
+| GPU Inference | ASU Sol HPC | Free (university) |
+| **Total** | | **~$35-40/month** |
 
 ### Deploy to a fresh Ubuntu server
 
@@ -192,27 +207,74 @@ sudo usermod -aG docker $USER
 sudo apt install -y docker-compose-plugin
 
 # 2. Clone the project
-git clone https://github.com/YOUR_USERNAME/h8-labeling.git
+git clone https://github.com/vasukhanna6292/h8-labeling.git
 cd h8-labeling
 
 # 3. Configure .env for production
 cp .env.example .env
-# Edit .env with your server IP and secrets
+# Edit .env with your domain and secrets
 
 # 4. Add model weights
 # Upload best.pt to backend/weights/best.pt
 
-# 5. Start
-sudo docker compose up -d --build
+# 5. Add GCS key
+mkdir -p secrets
+# Upload your GCS service account JSON to secrets/gcs-key.json
 
-# 6. Run migrations
-sudo docker compose exec backend alembic upgrade head
+# 6. Start all services
+docker compose up -d --build
 
-# 7. Open firewall ports
-sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80 -j ACCEPT
-sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 443 -j ACCEPT
-sudo netfilter-persistent save
+# 7. Run migrations
+docker compose exec backend alembic upgrade head
+
+# 8. Set up HTTPS (after pointing DNS to your server IP)
+apt-get install -y certbot python3-certbot-nginx
+docker compose stop nginx
+certbot certonly --standalone -d yourdomain.com -d www.yourdomain.com
+# Update nginx.conf with SSL config, then:
+docker compose up -d nginx
 ```
+
+---
+
+## Sol GPU Inference (ASU HPC)
+
+For large batches (100k+ images), inference runs on ASU Sol A100 GPUs.
+
+### One-Time Setup on Sol
+
+```bash
+# 1. Create working directory
+mkdir -p /scratch/<netid>/h8-labeling && cd /scratch/<netid>/h8-labeling
+
+# 2. Download inference script
+wget -O sol_infer.py https://raw.githubusercontent.com/vasukhanna6292/h8-labeling/main/scripts/sol_infer.py
+
+# 3. Install dependencies
+pip install --user ultralytics google-cloud-storage requests pillow
+
+# 4. Upload via OOD Files browser:
+#    - best.pt (model weights — auto-synced from server on each run)
+#    - gcs-key.json (GCS service account key)
+```
+
+### Running Inference
+
+```bash
+# 1. Request GPU node
+srun --partition=htc --gres=gpu:a100:1 --time=02:00:00 --pty bash
+
+# 2. Run inference (copy command from the Sol GPU Job modal in the app)
+python3 /scratch/<netid>/h8-labeling/sol_infer.py \
+  --batch-id <id> \
+  --api-url https://h8labeling.com/api \
+  --api-token <your-jwt-token> \
+  --model-path /scratch/<netid>/h8-labeling/best.pt \
+  --gcs-bucket h8-labeling-data2 \
+  --gcs-key /scratch/<netid>/h8-labeling/gcs-key.json
+```
+
+The script automatically downloads the latest model weights from the server before each run. Predictions are posted back to the app in real time.
 
 ---
 
@@ -226,18 +288,31 @@ sudo netfilter-persistent save
 | POST | `/invites/` | Generate invite link (lead only) |
 | POST | `/invites/{token}/register` | Register via invite link |
 
-### Batches (Lead only)
+### Batches
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/batches/` | Create new batch |
 | GET | `/batches/` | List all batches |
-| POST | `/batches/{id}/trigger-inference` | Run YOLOv11 on batch |
+| POST | `/batches/{id}/trigger-inference` | Run CPU inference via Celery |
+| POST | `/batches/{id}/start-scratch` | Mark all images ready without inference |
 | POST | `/batches/{id}/assign` | Distribute tasks to annotators |
 | GET | `/batches/{id}/progress` | Get annotation progress |
-| GET | `/batches/{id}/export` | Download YOLO OBB zip |
+| POST | `/batches/{id}/export-gcs` | Export dataset to GCS in YOLO OBB format |
+| POST | `/batches/{id}/link-gcs` | Import images from a GCS folder |
+| POST | `/batches/{id}/finalize-sol` | Called by Sol script to mark batch done |
 
-### Tasks (Annotators)
+### Images
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/images/batches/{id}/upload` | Upload images to batch |
+| GET | `/images/batches/{id}` | List images in batch |
+| GET | `/images/{id}/file` | Serve image file (proxies GCS through backend) |
+| POST | `/images/{id}/predictions` | Receive predictions from Sol script |
+| DELETE | `/images/{id}` | Delete image and its predictions |
+
+### Tasks
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -245,14 +320,15 @@ sudo netfilter-persistent save
 | GET | `/tasks/{id}/predictions` | Get AI predictions for image |
 | PATCH | `/tasks/{id}` | Save annotations + mark complete |
 
-### Images
+### Models
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/images/batches/{id}/upload` | Upload images to batch |
-| GET | `/images/{id}/file` | Serve raw image file |
+| GET | `/models/current` | Get current model metadata |
+| POST | `/models/upload` | Upload new .pt weights file |
+| GET | `/models/download` | Download current weights (used by Sol script) |
 
-Full interactive API docs available at `/docs` when running.
+Full interactive API docs available at `https://h8labeling.com/docs`.
 
 ---
 
@@ -261,44 +337,20 @@ Full interactive API docs available at `/docs` when running.
 ```
 User (id, name, email, hashed_password, role)
   └── Task (id, image_id, user_id, status, annotations_json)
-        └── Image (id, batch_id, file_path, status)
-              ├── Prediction (id, image_id, class_name, cx, cy, w, h, angle, confidence)
-              └── Batch (id, name, status, created_at)
+
+Batch (id, name, status, classes, created_at)
+  └── Image (id, batch_id, file_path, storage_url, status)
+        └── Prediction (id, image_id, class_name, cx, cy, w, h, angle, confidence)
 ```
-
----
-
-## Roles
-
-| Role | Permissions |
-|------|------------|
-| **Lead** | Upload images, trigger inference, assign tasks, export, manage users, upload models |
-| **Annotator** | View assigned tasks, edit bounding boxes, mark complete |
-
----
-
-## Annotation Canvas Controls
-
-| Action | How |
-|--------|-----|
-| Select box | Click on it |
-| Move box | Drag center |
-| Rotate box | Drag rotation handle |
-| Resize box | Drag corner handles |
-| Draw new box | Click "Draw" mode, drag on canvas |
-| Delete box | Select + press Delete key |
-| Next image | Arrow key → or Next button |
-| Previous image | Arrow key ← or Prev button |
-| Skip image | Click Skip |
 
 ---
 
 ## Export Format
 
-Exports a ZIP file containing:
+Exports directly to Google Cloud Storage under a folder named after the batch:
 
 ```
-export/
+<batch-name>/
 ├── images/
 │   ├── image1.jpg
 │   └── image2.jpg
@@ -312,6 +364,7 @@ YOLO OBB label format per line:
 ```
 class_id cx cy w h angle
 ```
+All values normalized (0–1). Angle in degrees.
 
 ---
 
@@ -326,13 +379,38 @@ class_id cx cy w h angle
 | `POSTGRES_USER` | PostgreSQL username | Yes |
 | `POSTGRES_PASSWORD` | PostgreSQL password | Yes |
 | `POSTGRES_DB` | PostgreSQL database name | Yes |
-| `APP_URL` | Frontend URL (for CORS) | Yes |
-| `VITE_API_URL` | Backend API URL (for frontend) | Yes |
+| `APP_URL` | Frontend URL | Yes |
+| `VITE_API_URL` | Backend API URL (baked into frontend at build time) | Yes |
+| `GCS_BUCKET_NAME` | Google Cloud Storage bucket name | For GCS features |
+| `GCS_KEY_PATH` | Path to GCS service account JSON key | For GCS features |
 | `WATCHER_ENABLED` | Enable cloud storage watcher | No |
-| `AWS_ACCESS_KEY_ID` | AWS S3 credentials | No |
-| `AWS_SECRET_ACCESS_KEY` | AWS S3 credentials | No |
-| `AWS_BUCKET_NAME` | S3 bucket name | No |
-| `SMTP_HOST` | Email server for notifications | No |
+| `AWS_ACCESS_KEY_ID` | AWS S3 credentials (watcher only) | No |
+| `AWS_SECRET_ACCESS_KEY` | AWS S3 credentials (watcher only) | No |
+| `AWS_BUCKET_NAME` | S3 bucket name (watcher only) | No |
+
+---
+
+## Annotation Canvas Controls
+
+| Action | How |
+|--------|-----|
+| Select box | Click on it |
+| Move box | Drag center |
+| Rotate box | Drag rotation handle |
+| Resize box | Drag corner handles |
+| Draw new box | Click class in legend, drag on canvas |
+| Delete box | Select + press Delete key |
+| Zoom | Scroll wheel |
+| Pan | Hold Space + drag |
+
+---
+
+## Roles
+
+| Role | Permissions |
+|------|------------|
+| **Lead** | Create batches, upload images, link GCS, run inference, assign tasks, export, manage model weights, invite annotators |
+| **Annotator** | View assigned tasks, edit bounding boxes, mark complete |
 
 ---
 
@@ -344,6 +422,7 @@ class_id cx cy w h angle
 - [Konva.js](https://konvajs.org/)
 - [PostgreSQL](https://www.postgresql.org/)
 - [Celery](https://docs.celeryq.dev/)
+- [Google Cloud Storage](https://cloud.google.com/storage)
 - [Docker](https://www.docker.com/)
 
 ---
