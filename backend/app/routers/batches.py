@@ -609,10 +609,6 @@ def export_batch(
         .filter(Image.batch_id == batch_id)
         .all()
     )
-    class_names = sorted(set(p.class_name for p in predictions_all))
-    if not class_names:
-        raise HTTPException(status_code=400, detail="No predictions found. Run inference first.")
-    class_to_idx = {name: idx for idx, name in enumerate(class_names)}
 
     # Map image_id → completed task annotations
     completed_tasks = (
@@ -626,6 +622,19 @@ def export_batch(
         if t.annotations_json:
             task_annotations[t.image_id] = json.loads(t.annotations_json)
 
+    # Build class list from predictions + annotations + batch.classes (handles scratch workflow)
+    class_name_set = set(p.class_name for p in predictions_all)
+    for boxes in task_annotations.values():
+        for b in boxes:
+            if b.get("class_name"):
+                class_name_set.add(b["class_name"])
+    if batch.classes:
+        class_name_set.update(batch.classes)
+    class_names = sorted(class_name_set)
+    if not class_names:
+        raise HTTPException(status_code=400, detail="No annotations or classes found in this batch.")
+    class_to_idx = {name: idx for idx, name in enumerate(class_names)}
+
     # Map image_id → raw predictions
     preds_by_image: dict[int, list[Prediction]] = {}
     for p in predictions_all:
@@ -636,14 +645,16 @@ def export_batch(
 
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for image in images:
-            if not os.path.exists(image.file_path):
-                continue
+            # Determine image filename
+            if image.storage_url and image.storage_url.startswith("gcs://"):
+                blob_name = image.storage_url[len("gcs://"):]
+                filename = os.path.basename(blob_name)
+            else:
+                filename = os.path.basename(image.file_path)
 
-            filename = os.path.basename(image.file_path)
             stem = os.path.splitext(filename)[0]
 
             if image.id in task_annotations:
-                # Completed task — use reviewed annotations
                 boxes = task_annotations[image.id]
                 lines = []
                 for b in boxes:
@@ -652,10 +663,8 @@ def export_batch(
                     pts = " ".join(f"{x:.6f} {y:.6f}" for x, y in corners)
                     lines.append(f"{idx} {pts}")
             elif completed_only:
-                # Skip non-completed images when completed_only is set
                 continue
             elif image.id in preds_by_image:
-                # Fall back to raw predictions
                 lines = []
                 for p in preds_by_image[image.id]:
                     idx = class_to_idx.get(p.class_name, 0)
@@ -665,8 +674,22 @@ def export_batch(
             else:
                 continue
 
-            with open(image.file_path, "rb") as f:
-                zf.writestr(f"images/{filename}", f.read())
+            # Read image bytes — from GCS or local disk
+            try:
+                if image.storage_url and image.storage_url.startswith("gcs://"):
+                    from app.core.gcs import _get_client
+                    buf = io.BytesIO()
+                    _get_client().bucket(settings.GCS_BUCKET_NAME).blob(blob_name).download_to_file(buf)
+                    image_bytes = buf.getvalue()
+                else:
+                    if not os.path.exists(image.file_path):
+                        continue
+                    with open(image.file_path, "rb") as f:
+                        image_bytes = f.read()
+            except Exception:
+                continue
+
+            zf.writestr(f"images/{filename}", image_bytes)
             zf.writestr(f"labels/{stem}.txt", "\n".join(lines))
             exported += 1
 

@@ -70,7 +70,9 @@ export async function downloadExport(batchId, completedOnly = false) {
   const a = document.createElement('a')
   a.href = url
   a.download = `batch_${batchId}_yolo_obb${completedOnly ? '_completed' : '_all'}.zip`
+  document.body.appendChild(a)
   a.click()
+  document.body.removeChild(a)
   URL.revokeObjectURL(url)
 }
 
