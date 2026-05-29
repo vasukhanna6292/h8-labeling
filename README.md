@@ -6,6 +6,44 @@ A collaborative oriented bounding box (OBB) annotation platform built for part-b
 
 ---
 
+## 🎥 Demo Videos
+
+| Feature | Demo |
+|----------|----------|
+| H8Labelling Annotation Agent User Guide | [Watch Video](https://drive.google.com/file/d/1FLe0q-m39ibv9Ot_uEkUmt0MYeoRLluU/view?usp=sharing) |
+| Importing Images from GCS Bucket | [Watch Video](https://drive.google.com/file/d/1LQMuaTOjs6uBL94SDcDOI9PsfKWHGOYx/view?usp=sharing) |
+| Creating and Managing Annotation Labels | [Watch Video](https://drive.google.com/file/d/1ycJn3XeVMB8b0V7FJNhYylPayPbgpO2T/view?usp=sharing) |
+| Automated Image Annotation Using Model Inference | [Watch Video](https://app.trupeer.ai/view/WVpR4jFAF/automated-image-annotation-using-model-inference) |
+| Assigning and Inspecting Image Inference Tasks | [Watch Video](https://app.trupeer.ai/view/2TUZZCgXC/assigning-and-inspecting-image-inference-tasks) |
+| Image Annotation Task Workflow Guide | [Watch Video](https://drive.google.com/file/d/1ORDFPP4qWS5ShjHQC_mWV3T0ZJK-yL3s/view?usp=sharing) |
+| Annotator Management and GPU Inference Setup Guide | [Watch Video](https://drive.google.com/file/d/1MeIR0sAC93kt8-lbMm-7D3Ak5DXV01jq/view?usp=sharing) |
+| Running GPU Inference and Managing Annotations on ASU SOL | [Watch Video](https://app.trupeer.ai/view/1XrmdFoBV/running-gpu-inference-and-managing-annotations-on-asu-sol) |
+
+### Suggested Viewing Order
+
+1. Annotation Agent User Guide
+2. Importing Images from GCS Bucket
+3. Creating and Managing Annotation Labels
+4. Automated Image Annotation Using Model Inference
+5. Assigning and Inspecting Image Inference Tasks
+6. Image Annotation Task Workflow Guide
+7. Annotator Management and GPU Inference Setup Guide
+8. Running GPU Inference and Managing Annotations on ASU SOL
+
+---
+
+## What This Does
+
+Instead of drawing every bounding box from scratch:
+
+1. Lead uploads a batch of images (locally or from Google Cloud Storage)
+2. YOLOv11 model automatically runs inference — on CPU or ASU Sol A100 GPU
+3. Tasks are distributed equally among annotators
+4. Annotators inspect, rotate, resize, or delete boxes using an interactive canvas
+5. Lead exports the final labeled dataset in YOLO OBB format directly to GCS for model retraining
+
+---
+
 ## What This Does
 
 Instead of drawing every bounding box from scratch:
