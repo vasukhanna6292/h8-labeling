@@ -35,7 +35,13 @@ export default function AnnotatorQueue() {
   const totalCompleted = tasks.filter(t => t.status === 'completed' || t.status === 'skipped').length
 
   function openTask(task, batchTasks) {
-    const siblingTaskIds = batchTasks.map(t => t.id)
+    // Sort to match display order: pending/in_progress first, then completed/skipped
+    // This ensures Prev/Next in the canvas matches the visual queue order
+    const sorted = [
+      ...batchTasks.filter(t => t.status === 'pending' || t.status === 'in_progress'),
+      ...batchTasks.filter(t => t.status === 'completed' || t.status === 'skipped'),
+    ]
+    const siblingTaskIds = sorted.map(t => t.id)
     const currentIndex = siblingTaskIds.indexOf(task.id)
     navigate(`/annotate/${task.id}`, { state: { siblingTaskIds, currentIndex } })
   }

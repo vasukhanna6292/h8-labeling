@@ -120,9 +120,12 @@ export default function AnnotationCanvas() {
   const [batchClasses, setBatchClasses] = useState([])
 
   const siblingTaskIds = location.state?.siblingTaskIds || []
-  const currentIndex = location.state?.currentIndex ?? siblingTaskIds.indexOf(parseInt(taskId))
-  const hasPrev = currentIndex > 0
-  const hasNext = currentIndex < siblingTaskIds.length - 1
+  // Prefer explicit index from state; fall back to indexOf only when state is available
+  const rawIndex = location.state?.currentIndex ?? (siblingTaskIds.length > 0 ? siblingTaskIds.indexOf(parseInt(taskId)) : -1)
+  const currentIndex = rawIndex >= 0 ? rawIndex : 0
+  const hasNavigation = siblingTaskIds.length > 1 && rawIndex >= 0
+  const hasPrev = hasNavigation && currentIndex > 0
+  const hasNext = hasNavigation && currentIndex < siblingTaskIds.length - 1
 
   const [konvaImg] = useImage(imgUrl, 'anonymous')
 
@@ -373,7 +376,7 @@ export default function AnnotationCanvas() {
           )}
         </div>
 
-        {siblingTaskIds.length > 0 && (
+        {hasNavigation && (
           <div className="flex items-center gap-1">
             <button onClick={() => goToSibling(currentIndex - 1)} disabled={!hasPrev}
               className="text-gray-300 hover:text-white disabled:opacity-25 px-3 py-1 rounded border border-gray-700 hover:border-gray-500 text-sm transition">
