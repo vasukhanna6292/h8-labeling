@@ -292,6 +292,27 @@ export default function LeadDashboard() {
     }
   }
 
+  async function reassignTasks() {
+    if (!selectedBatch) return
+    const completedCount = progress?.completed ?? '?'
+    if (!window.confirm(
+      `This will re-open ${completedCount} completed task(s) for re-annotation.\n\nExisting boxes are preserved — annotators just need to review and resubmit.\n\nContinue?`
+    )) return
+    setMsg('')
+    try {
+      const result = await apiPost(`/batches/${selectedBatch.id}/reassign`)
+      setMsg(`✓ ${result.tasks_reset} task(s) sent back for re-labeling. Annotators will see them in their queue.`)
+      const [prog, stats] = await Promise.all([
+        apiGet(`/batches/${selectedBatch.id}/progress`),
+        apiGet(`/batches/${selectedBatch.id}/annotator-stats`),
+      ])
+      setProgress(prog)
+      setAnnotatorStats(stats)
+    } catch (err) {
+      setMsg(`Error: ${err.message}`)
+    }
+  }
+
   async function handleExport(completedOnly = false) {
     setExporting(true)
     setMsg('')
@@ -885,7 +906,7 @@ export default function LeadDashboard() {
                         </div>
                       ))}
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-wrap">
                       <button
                         onClick={assignTasks}
                         disabled={assigning || selectedBatch.status !== 'done' || newlyUploadedCount > 0}
@@ -894,6 +915,15 @@ export default function LeadDashboard() {
                       >
                         {assigning ? 'Assigning...' : selectedAnnotators.length === 0 ? '⚡ Assign to All Annotators' : `⚡ Assign to Selected (${selectedAnnotators.length})`}
                       </button>
+                      {progress?.completed > 0 && (
+                        <button
+                          onClick={reassignTasks}
+                          className="bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm px-4 py-2 rounded-lg transition border border-gray-600"
+                          title="Send completed tasks back for re-annotation. Existing boxes are preserved."
+                        >
+                          ↩ Reassign for Re-labeling ({progress.completed})
+                        </button>
+                      )}
                     </div>
                     {newlyUploadedCount > 0 && (
                       <p className="text-xs text-yellow-500 mt-2">⚠ {newlyUploadedCount} newly uploaded image(s). Run inference before assigning.</p>

@@ -198,6 +198,46 @@ def assign_tasks(
     )
 
 
+@router.post("/{batch_id}/reassign")
+def reassign_tasks(
+    batch_id: int,
+    completed_only: bool = Query(True, description="If true, only reset completed/skipped tasks. If false, reset all tasks."),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_lead),
+):
+    """
+    Reset existing tasks back to pending so annotators can re-annotate.
+    Existing annotations are preserved — annotators see their previous boxes
+    and can add/remove/edit before resubmitting.
+    """
+    batch = db.query(Batch).filter(Batch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    query = (
+        db.query(Task)
+        .join(Image)
+        .filter(Image.batch_id == batch_id)
+    )
+    if completed_only:
+        query = query.filter(Task.status.in_([TaskStatus.completed, TaskStatus.skipped]))
+
+    tasks = query.all()
+    if not tasks:
+        raise HTTPException(status_code=400, detail="No tasks to reassign in this batch.")
+
+    for task in tasks:
+        task.status = TaskStatus.pending
+
+    db.commit()
+
+    return {
+        "batch_id": batch_id,
+        "tasks_reset": len(tasks),
+        "message": f"{len(tasks)} task(s) reset to pending. Annotators will see them in their queue with existing annotations preserved.",
+    }
+
+
 @router.get("/{batch_id}/classes")
 def batch_classes(
     batch_id: int,
