@@ -437,6 +437,7 @@ export default function LeadDashboard() {
       setLabelCounts(counts)
       setMsg(`✓ Class "${cls}" and its ${count} annotation${count !== 1 ? 's' : ''} deleted.`)
     } catch (err) {
+      alert(`Failed to delete class: ${err.message}`)
       setMsg(`Error: ${err.message}`)
     }
   }
