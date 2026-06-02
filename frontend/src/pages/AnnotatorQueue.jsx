@@ -51,14 +51,17 @@ export default function AnnotatorQueue() {
     const isPending = task.status === 'pending' || task.status === 'in_progress'
 
     if (isPending) {
-      // Navigate only through pending tasks — counter shows "X of Y remaining"
+      // Navigate only through pending tasks so counter shows "X of Y remaining"
       const pendingTasks = batchTasks.filter(t => t.status === 'pending' || t.status === 'in_progress')
       const siblingTaskIds = pendingTasks.map(t => t.id)
       const currentIndex = siblingTaskIds.indexOf(task.id)
-      navigate(`/annotate/${task.id}`, { state: { siblingTaskIds, currentIndex, totalInBatch: batchTasks.length } })
+      navigate(`/annotate/${task.id}`, { state: { siblingTaskIds, currentIndex, mode: 'pending' } })
     } else {
-      // Reviewing a completed task — no Prev/Next navigation (open standalone)
-      navigate(`/annotate/${task.id}`, { state: { siblingTaskIds: [], currentIndex: -1 } })
+      // Reviewing completed tasks — navigate through all completed tasks
+      const completedTasks = batchTasks.filter(t => t.status === 'completed' || t.status === 'skipped')
+      const siblingTaskIds = completedTasks.map(t => t.id)
+      const currentIndex = siblingTaskIds.indexOf(task.id)
+      navigate(`/annotate/${task.id}`, { state: { siblingTaskIds, currentIndex, mode: 'review' } })
     }
   }
 
