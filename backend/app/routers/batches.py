@@ -377,16 +377,16 @@ def rename_class(
     if not new_name:
         raise HTTPException(status_code=400, detail="New name cannot be empty")
 
-    # Update predictions
+    # Update predictions (use subquery to avoid join+update issue)
+    image_ids = [r.id for r in db.query(Image.id).filter(Image.batch_id == batch_id).all()]
     pred_count = (
         db.query(Prediction)
-        .join(Image)
-        .filter(Image.batch_id == batch_id, Prediction.class_name == old_name)
+        .filter(Prediction.image_id.in_(image_ids), Prediction.class_name == old_name)
         .update({"class_name": new_name}, synchronize_session=False)
     )
 
     # Update task annotations_json
-    tasks = db.query(Task).join(Image).filter(Image.batch_id == batch_id).all()
+    tasks = db.query(Task).filter(Task.image_id.in_(image_ids)).all()
     task_count = 0
     for task in tasks:
         if not task.annotations_json:
@@ -424,16 +424,16 @@ def delete_class(
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
 
-    # Delete predictions
+    # Delete predictions (use subquery to avoid join+delete issue)
+    image_ids = [r.id for r in db.query(Image.id).filter(Image.batch_id == batch_id).all()]
     pred_count = (
         db.query(Prediction)
-        .join(Image)
-        .filter(Image.batch_id == batch_id, Prediction.class_name == class_name)
+        .filter(Prediction.image_id.in_(image_ids), Prediction.class_name == class_name)
         .delete(synchronize_session=False)
     )
 
     # Remove boxes from task annotations_json
-    tasks = db.query(Task).join(Image).filter(Image.batch_id == batch_id).all()
+    tasks = db.query(Task).filter(Task.image_id.in_(image_ids)).all()
     task_count = 0
     for task in tasks:
         if not task.annotations_json:
@@ -475,13 +475,9 @@ def cleanup_orphaned(
 
     valid = set(batch.classes)
 
-    # Delete orphaned predictions
-    all_preds = (
-        db.query(Prediction)
-        .join(Image)
-        .filter(Image.batch_id == batch_id)
-        .all()
-    )
+    # Delete orphaned predictions (use subquery to avoid join+delete issue)
+    image_ids = [r.id for r in db.query(Image.id).filter(Image.batch_id == batch_id).all()]
+    all_preds = db.query(Prediction).filter(Prediction.image_id.in_(image_ids)).all()
     orphan_pred_count = 0
     for p in all_preds:
         if p.class_name not in valid:
@@ -489,7 +485,7 @@ def cleanup_orphaned(
             orphan_pred_count += 1
 
     # Strip orphaned boxes from task annotations
-    tasks = db.query(Task).join(Image).filter(Image.batch_id == batch_id).all()
+    tasks = db.query(Task).filter(Task.image_id.in_(image_ids)).all()
     task_count = 0
     for task in tasks:
         if not task.annotations_json:
