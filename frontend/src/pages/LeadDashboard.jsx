@@ -90,7 +90,7 @@ export default function LeadDashboard() {
     setMsg('')
     try {
       const res = await apiPost(`/batches/${selectedBatch.id}/set-gcs-folder?folder=${encodeURIComponent(gcsFolder.trim())}`)
-      setMsg(`✓ GCS folder linked — ${res.images_imported} images imported (${res.images_found} found)`)
+      setMsg(`✓ GCS folder linked. ${res.images_imported} images imported (${res.images_found} found)`)
       const imgs = await apiGet(`/images/batches/${selectedBatch.id}`)
       setImages(imgs)
       setNewlyUploadedCount(res.images_imported)
@@ -154,7 +154,7 @@ export default function LeadDashboard() {
       const imgs = await apiGet(`/images/batches/${selectedBatch.id}`)
       setImages(imgs)
       setNewlyUploadedCount(prev => prev + files.length)
-      setMsg(`✓ ${files.length} image(s) uploaded — run inference before assigning`)
+      setMsg(`✓ ${files.length} image(s) uploaded. Run inference before assigning.`)
     } catch (err) {
       setMsg(`Error: ${err.message}`)
     } finally {
@@ -166,7 +166,7 @@ export default function LeadDashboard() {
   async function triggerInference() {
     try {
       await apiPost(`/batches/${selectedBatch.id}/trigger-inference`)
-      setMsg('✓ Inference queued — images will update as they complete')
+      setMsg('✓ Inference queued. Images will update as they complete.')
       const b = await apiGet(`/batches/${selectedBatch.id}`)
       setSelectedBatch(b)
       setBatches(prev => prev.map(x => x.id === b.id ? b : x))
@@ -249,7 +249,7 @@ export default function LeadDashboard() {
     setMsg('')
     try {
       const res = await apiPost(`/batches/${selectedBatch.id}/start-scratch`)
-      setMsg(`✓ ${res.images_count} images ready — assign tasks to annotators below`)
+      setMsg(`✓ ${res.images_count} images ready. Assign tasks to annotators below.`)
       const [b, imgs] = await Promise.all([
         apiGet(`/batches/${selectedBatch.id}`),
         apiGet(`/images/batches/${selectedBatch.id}`),
@@ -323,7 +323,7 @@ export default function LeadDashboard() {
       const result = await uploadModel(file, (loaded, total) => {
         setModelUploadProgress(Math.round((loaded / total) * 100))
       })
-      setModelMsg(`✓ Model uploaded (${result.size_mb} MB) — workers will reload on next inference`)
+      setModelMsg(`✓ Model uploaded (${result.size_mb} MB). Workers will reload on next inference.`)
       const info = await getCurrentModel()
       setModelInfo(info)
     } catch (err) {
@@ -350,7 +350,7 @@ export default function LeadDashboard() {
       if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Upload failed') }
       const data = await res.json()
       setBatchClasses(data.classes)
-      setMsg(`✓ YAML uploaded — ${data.classes.length} classes loaded: ${data.classes.join(', ')}`)
+      setMsg(`✓ YAML uploaded. ${data.classes.length} classes loaded: ${data.classes.join(', ')}`)
     } catch (err) {
       setMsg(`Error: ${err.message}`)
     } finally {
@@ -682,14 +682,14 @@ export default function LeadDashboard() {
                         <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition ${inferenceTarget === 'cpu' ? 'border-purple-500 bg-purple-950/40' : 'border-gray-700 hover:border-gray-600'}`}>
                           <input type="radio" name="inf-target" value="cpu" checked={inferenceTarget === 'cpu'} onChange={() => setInferenceTarget('cpu')} className="mt-0.5 accent-purple-500" />
                           <div>
-                            <div className="text-sm text-white font-medium">CPU (local) <span className="text-xs text-gray-500 font-normal">— best for &lt;500 images</span></div>
+                            <div className="text-sm text-white font-medium">CPU (local) <span className="text-xs text-gray-500 font-normal">best for under 500 images</span></div>
                             <div className="text-xs text-gray-400 mt-0.5">{images.length} images · est. {cpuEst(images.length)} · runs on this server</div>
                           </div>
                         </label>
                         <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition ${inferenceTarget === 'sol' ? 'border-orange-500 bg-orange-950/30' : 'border-gray-700 hover:border-gray-600'}`}>
                           <input type="radio" name="inf-target" value="sol" checked={inferenceTarget === 'sol'} onChange={() => setInferenceTarget('sol')} className="mt-0.5 accent-orange-500" />
                           <div>
-                            <div className="text-sm text-white font-medium">Sol GPU <span className="text-xs text-gray-500 font-normal">(ASU A100) — best for 500+ images</span></div>
+                            <div className="text-sm text-white font-medium">Sol GPU <span className="text-xs text-gray-500 font-normal">(ASU A100), best for 500+ images</span></div>
                             <div className="text-xs text-gray-400 mt-0.5">{images.length} images · est. {solEst(images.length)} · requires Sol access</div>
                           </div>
                         </label>
@@ -771,7 +771,7 @@ export default function LeadDashboard() {
                       </button>
                     </div>
                     {newlyUploadedCount > 0 && (
-                      <p className="text-xs text-yellow-500 mt-2">⚠ {newlyUploadedCount} newly uploaded image(s) — run inference before assigning.</p>
+                      <p className="text-xs text-yellow-500 mt-2">⚠ {newlyUploadedCount} newly uploaded image(s). Run inference before assigning.</p>
                     )}
                     {newlyUploadedCount === 0 && selectedBatch.status !== 'done' && (
                       <p className="text-xs text-yellow-600 mt-2">⚠ Run inference first. Assign unlocks when batch status is "done".</p>
@@ -823,7 +823,7 @@ export default function LeadDashboard() {
               {/* Invite Annotators */}
               <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
                 <h3 className="text-sm font-semibold text-gray-300 mb-3">Invite Annotators</h3>
-                <p className="text-xs text-gray-500 mb-3">Generate a one-time link (48h expiry). Share it via WhatsApp/email — annotator clicks it, creates their account, and appears in your annotator list automatically.</p>
+                <p className="text-xs text-gray-500 mb-3">Generate a one-time link (48h expiry). Share it via WhatsApp or email. The annotator clicks it, creates their account and appears in your list automatically.</p>
                 <button
                   onClick={generateInvite}
                   disabled={inviteLoading}
@@ -874,7 +874,7 @@ export default function LeadDashboard() {
                   </div>
                 )}
                 {modelMsg && <p className="text-xs mt-2 text-gray-300">{modelMsg}</p>}
-                <p className="text-xs text-gray-600 mt-2">Workers reload the new model automatically on their next inference run — no restart needed.</p>
+                <p className="text-xs text-gray-600 mt-2">Workers reload the new model automatically on their next inference run. No restart needed.</p>
               </div>
 
               {/* Export */}

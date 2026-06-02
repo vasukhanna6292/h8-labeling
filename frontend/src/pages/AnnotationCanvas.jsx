@@ -393,7 +393,7 @@ export default function AnnotationCanvas() {
         <div className="flex items-center gap-2">
           <span className="text-xs text-gray-500">
             {boxes.length} box{boxes.length !== 1 ? 'es' : ''} ·{' '}
-            {drawMode ? 'Draw mode — drag to create box' : selectedId !== null ? 'Selected (Del to remove)' : 'Click box to select · D to draw'}
+            {drawMode ? 'Draw mode, drag to create a box' : selectedId !== null ? 'Selected (Del to remove)' : 'Click box to select · D to draw'}
           </span>
           <button
             onClick={drawMode ? exitDrawMode : enterDrawMode}

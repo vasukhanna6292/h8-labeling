@@ -163,7 +163,7 @@ export default function AnnotatorQueue() {
                     {done.length > 0 && (
                       <details className="border-t border-gray-800">
                         <summary className="px-4 py-2 text-xs text-gray-500 cursor-pointer hover:text-gray-300 select-none">
-                          ▸ {done.length} completed — click to review
+                          ▸ {done.length} completed, click to review
                         </summary>
                         <div className="divide-y divide-gray-800">
                           {done.map(task => (
