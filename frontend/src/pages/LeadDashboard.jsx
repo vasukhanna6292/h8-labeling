@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { apiGet, apiPost, apiDelete, createInvite, getCurrentModel, uploadModel, uploadImages, downloadExport } from '../api/client'
+import { apiGet, apiPost, apiPatch, apiDelete, createInvite, getCurrentModel, uploadModel, uploadImages, downloadExport } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import { useNavigate } from 'react-router-dom'
 
@@ -47,6 +47,8 @@ export default function LeadDashboard() {
   const [yamlUploading, setYamlUploading] = useState(false)
   const [renamingClass, setRenamingClass] = useState(null) // { old, newVal }
   const [labelCounts, setLabelCounts] = useState(null) // { counts: {}, total: 0 }
+  const [renamingBatch, setRenamingBatch] = useState(false)
+  const [batchRenameVal, setBatchRenameVal] = useState('')
   const [gcsFolder, setGcsFolder] = useState('')
   const [gcsLinking, setGcsLinking] = useState(false)
   const [exportingToGcs, setExportingToGcs] = useState(false)
@@ -136,6 +138,21 @@ export default function LeadDashboard() {
     setLabelCounts(counts)
     setRenamingClass(null)
     setSelectedAnnotators([])
+  }
+
+  async function renameBatch() {
+    if (!batchRenameVal.trim() || batchRenameVal.trim() === selectedBatch.name) {
+      setRenamingBatch(false)
+      return
+    }
+    try {
+      const updated = await apiPatch(`/batches/${selectedBatch.id}`, { name: batchRenameVal.trim() })
+      setSelectedBatch(updated)
+      setBatches(prev => prev.map(b => b.id === updated.id ? updated : b))
+      setRenamingBatch(false)
+    } catch (err) {
+      setMsg(`Error: ${err.message}`)
+    }
   }
 
   async function createBatch(e) {
@@ -554,8 +571,32 @@ export default function LeadDashboard() {
           ) : (
             <div className="max-w-3xl space-y-6">
               <div className="flex items-center justify-between">
-                <h2 className="text-xl font-bold text-white">{selectedBatch.name}</h2>
-                <span className={`text-xs px-2 py-1 rounded-full font-medium ${statusColor(selectedBatch.status)}`}>{selectedBatch.status}</span>
+                {renamingBatch ? (
+                  <div className="flex items-center gap-2 flex-1 mr-3">
+                    <input
+                      autoFocus
+                      value={batchRenameVal}
+                      onChange={e => setBatchRenameVal(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') renameBatch()
+                        if (e.key === 'Escape') setRenamingBatch(false)
+                      }}
+                      className="flex-1 bg-gray-800 border border-blue-600 rounded-lg px-3 py-1.5 text-white text-lg font-bold focus:outline-none"
+                    />
+                    <button onClick={renameBatch} className="text-green-400 hover:text-green-300 text-sm transition">✓ Save</button>
+                    <button onClick={() => setRenamingBatch(false)} className="text-gray-500 hover:text-gray-300 text-sm transition">Cancel</button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 group">
+                    <h2 className="text-xl font-bold text-white">{selectedBatch.name}</h2>
+                    <button
+                      onClick={() => { setBatchRenameVal(selectedBatch.name); setRenamingBatch(true) }}
+                      className="text-gray-600 hover:text-blue-400 transition opacity-0 group-hover:opacity-100 text-sm"
+                      title="Rename batch"
+                    >✎</button>
+                  </div>
+                )}
+                <span className={`text-xs px-2 py-1 rounded-full font-medium shrink-0 ${statusColor(selectedBatch.status)}`}>{selectedBatch.status}</span>
               </div>
 
               {msg && <div className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm text-gray-200">{msg}</div>}
