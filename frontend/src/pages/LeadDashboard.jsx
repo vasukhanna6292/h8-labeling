@@ -45,6 +45,8 @@ export default function LeadDashboard() {
   const [batchClasses, setBatchClasses] = useState([])
   const [newClassName, setNewClassName] = useState('')
   const [yamlUploading, setYamlUploading] = useState(false)
+  const [renamingClass, setRenamingClass] = useState(null) // { old, newVal }
+  const [labelCounts, setLabelCounts] = useState(null) // { counts: {}, total: 0 }
   const [gcsFolder, setGcsFolder] = useState('')
   const [gcsLinking, setGcsLinking] = useState(false)
   const [exportingToGcs, setExportingToGcs] = useState(false)
@@ -120,16 +122,19 @@ export default function LeadDashboard() {
     setNewlyUploadedCount(0)
     setBatchClasses([])
     setGcsFolder(batch.gcs_folder || '')
-    const [imgs, prog, stats, classes] = await Promise.all([
+    const [imgs, prog, stats, classes, counts] = await Promise.all([
       apiGet(`/images/batches/${batch.id}`),
       apiGet(`/batches/${batch.id}/progress`),
       apiGet(`/batches/${batch.id}/annotator-stats`),
       apiGet(`/batches/${batch.id}/classes`).catch(() => []),
+      apiGet(`/batches/${batch.id}/label-counts`).catch(() => null),
     ])
     setImages(imgs)
     setProgress(prog)
     setAnnotatorStats(stats)
     setBatchClasses(classes)
+    setLabelCounts(counts)
+    setRenamingClass(null)
     setSelectedAnnotators([])
   }
 
@@ -394,6 +399,26 @@ export default function LeadDashboard() {
     }
   }
 
+  async function renameClass(oldName, newName) {
+    if (!selectedBatch || !newName.trim() || newName.trim() === oldName) {
+      setRenamingClass(null)
+      return
+    }
+    try {
+      const res = await apiPost(
+        `/batches/${selectedBatch.id}/classes/rename?old_name=${encodeURIComponent(oldName)}&new_name=${encodeURIComponent(newName.trim())}`
+      )
+      const classes = await apiGet(`/batches/${selectedBatch.id}/classes`)
+      const counts = await apiGet(`/batches/${selectedBatch.id}/label-counts`).catch(() => null)
+      setBatchClasses(classes)
+      setLabelCounts(counts)
+      setRenamingClass(null)
+      setMsg(`✓ Renamed "${oldName}" to "${newName.trim()}" across ${res.predictions_updated} predictions and ${res.tasks_updated} tasks.`)
+    } catch (err) {
+      setMsg(`Error: ${err.message}`)
+    }
+  }
+
   async function deleteImage(img) {
     if (!confirm(`Delete "${img.file_path.split('/').pop()}"? This will also remove its predictions and task.`)) return
     try {
@@ -582,11 +607,37 @@ export default function LeadDashboard() {
                 {batchClasses.length > 0 && (
                   <div className="flex flex-wrap gap-2 mb-3">
                     {batchClasses.map((cls, i) => (
-                      <span key={i} className="flex items-center gap-1 bg-gray-800 border border-gray-700 text-xs text-gray-200 px-2 py-1 rounded-full">
-                        <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: BOX_COLORS[i % BOX_COLORS.length] }} />
-                        {cls}
-                        <button onClick={() => removeClass(cls)} className="ml-1 text-gray-500 hover:text-red-400 transition">✕</button>
-                      </span>
+                      renamingClass?.old === cls ? (
+                        <span key={i} className="flex items-center gap-1 bg-gray-700 border border-blue-600 text-xs px-2 py-1 rounded-full">
+                          <span className="w-2 h-2 rounded-full inline-block shrink-0" style={{ backgroundColor: BOX_COLORS[i % BOX_COLORS.length] }} />
+                          <input
+                            autoFocus
+                            value={renamingClass.newVal}
+                            onChange={e => setRenamingClass(r => ({ ...r, newVal: e.target.value }))}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') renameClass(cls, renamingClass.newVal)
+                              if (e.key === 'Escape') setRenamingClass(null)
+                            }}
+                            className="bg-transparent text-white outline-none w-28"
+                          />
+                          <button onClick={() => renameClass(cls, renamingClass.newVal)} className="text-green-400 hover:text-green-300 transition">✓</button>
+                          <button onClick={() => setRenamingClass(null)} className="text-gray-500 hover:text-gray-300 transition">✕</button>
+                        </span>
+                      ) : (
+                        <span key={i} className="group flex items-center gap-1 bg-gray-800 border border-gray-700 text-xs text-gray-200 px-2 py-1 rounded-full">
+                          <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: BOX_COLORS[i % BOX_COLORS.length] }} />
+                          {cls}
+                          {labelCounts?.counts?.[cls] !== undefined && (
+                            <span className="text-gray-500 ml-0.5">({labelCounts.counts[cls]})</span>
+                          )}
+                          <button
+                            onClick={() => setRenamingClass({ old: cls, newVal: cls })}
+                            className="ml-1 text-gray-600 hover:text-blue-400 transition opacity-0 group-hover:opacity-100"
+                            title="Rename"
+                          >✎</button>
+                          <button onClick={() => removeClass(cls)} className="text-gray-600 hover:text-red-400 transition opacity-0 group-hover:opacity-100">✕</button>
+                        </span>
+                      )
                     ))}
                   </div>
                 )}
@@ -606,6 +657,36 @@ export default function LeadDashboard() {
                   <button onClick={addClass} className="bg-gray-700 hover:bg-gray-600 text-white text-sm px-3 py-1.5 rounded transition">+ Add</button>
                 </div>
               </div>
+
+              {/* Label Statistics */}
+              {labelCounts && labelCounts.total > 0 && (
+                <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold text-gray-300">Label Statistics</h3>
+                    <span className="text-xs text-gray-500">{labelCounts.total} total annotations</span>
+                  </div>
+                  <div className="space-y-2">
+                    {Object.entries(labelCounts.counts).map(([cls, count], i) => {
+                      const pct = Math.round((count / labelCounts.total) * 100)
+                      const color = BOX_COLORS[batchClasses.indexOf(cls) % BOX_COLORS.length] || BOX_COLORS[i % BOX_COLORS.length]
+                      return (
+                        <div key={cls}>
+                          <div className="flex items-center justify-between text-xs mb-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                              <span className="text-gray-300">{cls}</span>
+                            </div>
+                            <span className="text-gray-400">{count} <span className="text-gray-600">({pct}%)</span></span>
+                          </div>
+                          <div className="w-full bg-gray-800 rounded-full h-1">
+                            <div className="h-1 rounded-full" style={{ width: `${pct}%`, backgroundColor: color + '99' }} />
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Annotation Mode */}
               <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">

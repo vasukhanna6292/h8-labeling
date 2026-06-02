@@ -3,18 +3,31 @@ import { useNavigate } from 'react-router-dom'
 import { apiGet, apiDelete } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 
+const BOX_COLORS = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F', '#82E0AA', '#F1948A']
+
 export default function AnnotatorQueue() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const [tasks, setTasks] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [labelCountsMap, setLabelCountsMap] = useState({}) // batchId -> { counts, total }
 
   useEffect(() => {
     async function load() {
       try {
         const t = await apiGet('/tasks/my-queue')
-        setTasks(t || [])
+        const loaded = t || []
+        setTasks(loaded)
+        // Fetch label counts for each unique batch
+        const batchIds = [...new Set(loaded.map(task => task.batch_id).filter(Boolean))]
+        const countsMap = {}
+        await Promise.all(batchIds.map(async batchId => {
+          try {
+            countsMap[batchId] = await apiGet(`/batches/${batchId}/label-counts`)
+          } catch {}
+        }))
+        setLabelCountsMap(countsMap)
       } catch (err) {
         setError(err.message || 'Failed to load tasks')
       } finally {
@@ -144,6 +157,21 @@ export default function AnnotatorQueue() {
                         <span>{pct}%</span>
                       </div>
                     </div>
+
+                    {/* Label counts */}
+                    {labelCountsMap[batchId] && labelCountsMap[batchId].total > 0 && (
+                      <div className="px-4 py-3 border-b border-gray-800">
+                        <p className="text-xs text-gray-500 mb-2">Label breakdown ({labelCountsMap[batchId].total} total)</p>
+                        <div className="flex flex-wrap gap-2">
+                          {Object.entries(labelCountsMap[batchId].counts).map(([cls, count], i) => (
+                            <span key={cls} className="flex items-center gap-1.5 text-xs text-gray-300">
+                              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: BOX_COLORS[i % BOX_COLORS.length] }} />
+                              {cls} <span className="text-gray-500 font-medium">{count}</span>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     {/* Pending tasks */}
                     {pending.length > 0 && (

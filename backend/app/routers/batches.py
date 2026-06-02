@@ -262,6 +262,109 @@ def update_classes(
     return {"classes": batch.classes}
 
 
+@router.post("/{batch_id}/classes/rename")
+def rename_class(
+    batch_id: int,
+    old_name: str,
+    new_name: str,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_lead),
+):
+    """Rename a class across all predictions and task annotations in a batch."""
+    batch = db.query(Batch).filter(Batch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    old_name = old_name.strip()
+    new_name = new_name.strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="New name cannot be empty")
+
+    # Update predictions
+    pred_count = (
+        db.query(Prediction)
+        .join(Image)
+        .filter(Image.batch_id == batch_id, Prediction.class_name == old_name)
+        .update({"class_name": new_name}, synchronize_session=False)
+    )
+
+    # Update task annotations_json
+    tasks = db.query(Task).join(Image).filter(Image.batch_id == batch_id).all()
+    task_count = 0
+    for task in tasks:
+        if not task.annotations_json:
+            continue
+        try:
+            annotations = json.loads(task.annotations_json)
+            updated = False
+            for box in annotations:
+                if box.get("class_name") == old_name:
+                    box["class_name"] = new_name
+                    updated = True
+            if updated:
+                task.annotations_json = json.dumps(annotations)
+                task_count += 1
+        except Exception:
+            continue
+
+    # Update batch.classes list
+    if batch.classes and old_name in batch.classes:
+        batch.classes = [new_name if c == old_name else c for c in batch.classes]
+
+    db.commit()
+    return {"renamed": old_name, "to": new_name, "predictions_updated": pred_count, "tasks_updated": task_count}
+
+
+@router.get("/{batch_id}/label-counts")
+def label_counts(
+    batch_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Return per-class annotation counts for a batch.
+    Completed tasks use reviewed annotations; others use raw predictions."""
+    batch = db.query(Batch).filter(Batch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    counts: dict[str, int] = {}
+
+    # Completed task annotations (reviewed data)
+    completed_tasks = (
+        db.query(Task)
+        .join(Image)
+        .filter(Image.batch_id == batch_id, Task.status == TaskStatus.completed)
+        .all()
+    )
+    completed_image_ids = set()
+    for task in completed_tasks:
+        completed_image_ids.add(task.image_id)
+        if task.annotations_json:
+            try:
+                for box in json.loads(task.annotations_json):
+                    cls = box.get("class_name", "unknown")
+                    counts[cls] = counts.get(cls, 0) + 1
+            except Exception:
+                pass
+
+    # Raw predictions for non-completed images
+    preds = (
+        db.query(Prediction)
+        .join(Image)
+        .filter(Image.batch_id == batch_id)
+        .all()
+    )
+    for p in preds:
+        if p.image_id not in completed_image_ids:
+            counts[p.class_name] = counts.get(p.class_name, 0) + 1
+
+    total = sum(counts.values())
+    return {
+        "counts": dict(sorted(counts.items(), key=lambda x: x[1], reverse=True)),
+        "total": total,
+    }
+
+
 @router.get("/{batch_id}/progress")
 def batch_progress(
     batch_id: int,
