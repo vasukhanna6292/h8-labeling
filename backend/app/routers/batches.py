@@ -315,6 +315,53 @@ def rename_class(
     return {"renamed": old_name, "to": new_name, "predictions_updated": pred_count, "tasks_updated": task_count}
 
 
+@router.delete("/{batch_id}/classes/{class_name}", status_code=200)
+def delete_class(
+    batch_id: int,
+    class_name: str,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_lead),
+):
+    """Delete a class and all its annotations (predictions + task boxes) from a batch."""
+    batch = db.query(Batch).filter(Batch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    # Delete predictions
+    pred_count = (
+        db.query(Prediction)
+        .join(Image)
+        .filter(Image.batch_id == batch_id, Prediction.class_name == class_name)
+        .delete(synchronize_session=False)
+    )
+
+    # Remove boxes from task annotations_json
+    tasks = db.query(Task).join(Image).filter(Image.batch_id == batch_id).all()
+    task_count = 0
+    for task in tasks:
+        if not task.annotations_json:
+            continue
+        try:
+            annotations = json.loads(task.annotations_json)
+            filtered = [b for b in annotations if b.get("class_name") != class_name]
+            if len(filtered) != len(annotations):
+                task.annotations_json = json.dumps(filtered)
+                task_count += 1
+        except Exception:
+            continue
+
+    # Remove from batch.classes
+    if batch.classes and class_name in batch.classes:
+        batch.classes = [c for c in batch.classes if c != class_name]
+
+    db.commit()
+    return {
+        "deleted_class": class_name,
+        "predictions_deleted": pred_count,
+        "tasks_updated": task_count,
+    }
+
+
 @router.get("/{batch_id}/label-counts")
 def label_counts(
     batch_id: int,

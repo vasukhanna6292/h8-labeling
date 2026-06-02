@@ -384,16 +384,20 @@ export default function LeadDashboard() {
 
   async function removeClass(cls) {
     if (!selectedBatch) return
-    const updated = batchClasses.filter(c => c !== cls)
+    const count = labelCounts?.counts?.[cls] ?? 0
+    const msg = count > 0
+      ? `There are ${count} "${cls}" annotation${count !== 1 ? 's' : ''} in this batch.\n\nDeleting this class will permanently remove all those boxes from every image. This cannot be undone.\n\nAre you sure?`
+      : `Remove the class "${cls}" from this batch?`
+    if (!window.confirm(msg)) return
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/batches/${selectedBatch.id}/classes`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
-        body: JSON.stringify(updated),
-      })
-      if (!res.ok) throw new Error('Failed to update classes')
-      const data = await res.json()
-      setBatchClasses(data.classes)
+      await apiDelete(`/batches/${selectedBatch.id}/classes/${encodeURIComponent(cls)}`)
+      const [classes, counts] = await Promise.all([
+        apiGet(`/batches/${selectedBatch.id}/classes`),
+        apiGet(`/batches/${selectedBatch.id}/label-counts`).catch(() => null),
+      ])
+      setBatchClasses(classes)
+      setLabelCounts(counts)
+      setMsg(`✓ Class "${cls}" and its ${count} annotation${count !== 1 ? 's' : ''} deleted.`)
     } catch (err) {
       setMsg(`Error: ${err.message}`)
     }
