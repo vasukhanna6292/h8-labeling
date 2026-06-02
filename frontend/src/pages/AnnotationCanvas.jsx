@@ -171,6 +171,12 @@ export default function AnnotationCanvas() {
 
   const allClasses = [...new Set(boxes.map(b => b.class_name))]
   const availableClasses = batchClasses.length > 0 ? batchClasses : allClasses
+
+  // Per-image label counts derived from current boxes
+  const boxCountByClass = boxes.reduce((acc, b) => {
+    acc[b.class_name] = (acc[b.class_name] || 0) + 1
+    return acc
+  }, {})
   const filteredClasses = labelSearch
     ? availableClasses.filter(c => c.toLowerCase().includes(labelSearch.toLowerCase()))
     : availableClasses
@@ -413,15 +419,21 @@ export default function AnnotationCanvas() {
         </div>
       </header>
 
-      {/* Class legend */}
+      {/* Class legend with per-image counts */}
       {availableClasses.length > 0 && (
         <div className="bg-gray-900 border-b border-gray-800 px-4 py-2 flex items-center gap-4 shrink-0 flex-wrap">
-          {availableClasses.map((cls, i) => (
-            <div key={cls} className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm" style={{ background: BOX_COLORS[i % BOX_COLORS.length] }} />
-              <span className="text-xs text-gray-300">{cls}</span>
-            </div>
-          ))}
+          {availableClasses.map((cls, i) => {
+            const count = boxCountByClass[cls] || 0
+            return (
+              <div key={cls} className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-sm" style={{ background: BOX_COLORS[i % BOX_COLORS.length] }} />
+                <span className="text-xs text-gray-300">{cls}</span>
+                <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${count === 0 ? 'bg-red-900 text-red-300' : 'bg-gray-800 text-gray-400'}`}>
+                  {count}
+                </span>
+              </div>
+            )
+          })}
         </div>
       )}
 
