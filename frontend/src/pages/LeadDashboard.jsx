@@ -663,34 +663,74 @@ export default function LeadDashboard() {
               </div>
 
               {/* Label Statistics */}
-              {labelCounts && labelCounts.total > 0 && (
-                <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-sm font-semibold text-gray-300">Label Statistics</h3>
-                    <span className="text-xs text-gray-500">{labelCounts.total} total annotations</span>
-                  </div>
-                  <div className="space-y-2">
-                    {Object.entries(labelCounts.counts).map(([cls, count], i) => {
-                      const pct = Math.round((count / labelCounts.total) * 100)
-                      const color = BOX_COLORS[batchClasses.indexOf(cls) % BOX_COLORS.length] || BOX_COLORS[i % BOX_COLORS.length]
-                      return (
-                        <div key={cls}>
-                          <div className="flex items-center justify-between text-xs mb-1">
-                            <div className="flex items-center gap-1.5">
-                              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                              <span className="text-gray-300">{cls}</span>
-                            </div>
-                            <span className="text-gray-400">{count} <span className="text-gray-600">({pct}%)</span></span>
+              {labelCounts && labelCounts.total > 0 && (() => {
+                const orphaned = Object.keys(labelCounts.counts).filter(cls => !batchClasses.includes(cls))
+                return (
+                  <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="text-sm font-semibold text-gray-300">Label Statistics</h3>
+                      <span className="text-xs text-gray-500">{labelCounts.total} total annotations</span>
+                    </div>
+
+                    {/* Orphaned class warning */}
+                    {orphaned.length > 0 && (
+                      <div className="mb-3 bg-red-950 border border-red-800 rounded-lg px-3 py-2">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-xs text-red-300 font-medium mb-0.5">
+                              ⚠ {orphaned.length} orphaned class{orphaned.length > 1 ? 'es' : ''} found
+                            </p>
+                            <p className="text-xs text-red-400">
+                              {orphaned.map(c => `"${c}" (${labelCounts.counts[c]})`).join(', ')} — removed from class list but annotations still exist on canvas.
+                            </p>
                           </div>
-                          <div className="w-full bg-gray-800 rounded-full h-1">
-                            <div className="h-1 rounded-full" style={{ width: `${pct}%`, backgroundColor: color + '99' }} />
-                          </div>
+                          <button
+                            onClick={async () => {
+                              const total = orphaned.reduce((s, c) => s + (labelCounts.counts[c] || 0), 0)
+                              if (!window.confirm(`Remove ${total} orphaned annotation${total !== 1 ? 's' : ''} for: ${orphaned.join(', ')}?\n\nThis will clean up boxes that have no matching class.`)) return
+                              try {
+                                await apiPost(`/batches/${selectedBatch.id}/cleanup-orphaned`)
+                                const counts = await apiGet(`/batches/${selectedBatch.id}/label-counts`).catch(() => null)
+                                setLabelCounts(counts)
+                                setMsg(`✓ Cleaned up ${total} orphaned annotation${total !== 1 ? 's' : ''}.`)
+                              } catch (err) {
+                                setMsg(`Error: ${err.message}`)
+                              }
+                            }}
+                            className="shrink-0 ml-3 bg-red-800 hover:bg-red-700 text-red-100 text-xs px-3 py-1.5 rounded-lg transition"
+                          >
+                            Clean up
+                          </button>
                         </div>
-                      )
-                    })}
+                      </div>
+                    )}
+
+                    <div className="space-y-2">
+                      {Object.entries(labelCounts.counts).map(([cls, count], i) => {
+                        const isOrphaned = !batchClasses.includes(cls)
+                        const pct = Math.round((count / labelCounts.total) * 100)
+                        const colorIdx = batchClasses.indexOf(cls)
+                        const color = isOrphaned ? '#888888' : (BOX_COLORS[colorIdx % BOX_COLORS.length] || BOX_COLORS[i % BOX_COLORS.length])
+                        return (
+                          <div key={cls} className={isOrphaned ? 'opacity-50' : ''}>
+                            <div className="flex items-center justify-between text-xs mb-1">
+                              <div className="flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                                <span className={isOrphaned ? 'text-gray-500 line-through' : 'text-gray-300'}>{cls}</span>
+                                {isOrphaned && <span className="text-red-500 text-xs">orphaned</span>}
+                              </div>
+                              <span className="text-gray-400">{count} <span className="text-gray-600">({pct}%)</span></span>
+                            </div>
+                            <div className="w-full bg-gray-800 rounded-full h-1">
+                              <div className="h-1 rounded-full" style={{ width: `${pct}%`, backgroundColor: color + '99' }} />
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
                   </div>
-                </div>
-              )}
+                )
+              })()}
 
               {/* Annotation Mode */}
               <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">

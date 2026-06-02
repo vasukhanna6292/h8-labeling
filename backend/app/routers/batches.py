@@ -362,6 +362,57 @@ def delete_class(
     }
 
 
+@router.post("/{batch_id}/cleanup-orphaned")
+def cleanup_orphaned(
+    batch_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_lead),
+):
+    """Remove all predictions and annotation boxes whose class is not in batch.classes."""
+    batch = db.query(Batch).filter(Batch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    if not batch.classes:
+        return {"message": "No classes defined — nothing to clean up", "deleted": 0}
+
+    valid = set(batch.classes)
+
+    # Delete orphaned predictions
+    all_preds = (
+        db.query(Prediction)
+        .join(Image)
+        .filter(Image.batch_id == batch_id)
+        .all()
+    )
+    orphan_pred_count = 0
+    for p in all_preds:
+        if p.class_name not in valid:
+            db.delete(p)
+            orphan_pred_count += 1
+
+    # Strip orphaned boxes from task annotations
+    tasks = db.query(Task).join(Image).filter(Image.batch_id == batch_id).all()
+    task_count = 0
+    for task in tasks:
+        if not task.annotations_json:
+            continue
+        try:
+            annotations = json.loads(task.annotations_json)
+            filtered = [b for b in annotations if b.get("class_name") in valid]
+            if len(filtered) != len(annotations):
+                task.annotations_json = json.dumps(filtered)
+                task_count += 1
+        except Exception:
+            continue
+
+    db.commit()
+    return {
+        "predictions_deleted": orphan_pred_count,
+        "tasks_updated": task_count,
+    }
+
+
 @router.get("/{batch_id}/label-counts")
 def label_counts(
     batch_id: int,
