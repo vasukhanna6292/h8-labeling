@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
-import { Stage, Layer, Image as KonvaImage, Rect, Transformer, Text } from 'react-konva'
+import { Stage, Layer, Image as KonvaImage, Rect, Transformer, Text, Line } from 'react-konva'
 import useImage from 'use-image'
 import { apiGet, apiPatch, apiDelete, imageFileUrl } from '../api/client'
 
@@ -35,7 +35,7 @@ function rectToPred(node, imgW, imgH) {
   }
 }
 
-function OBBBox({ box, isSelected, onSelect, onUpdate, imgW, imgH, color, inactive }) {
+function OBBBox({ box, isSelected, onSelect, onUpdate, imgW, imgH, color }) {
   const rectRef = useRef()
   const trRef = useRef()
 
@@ -56,8 +56,7 @@ function OBBBox({ box, isSelected, onSelect, onUpdate, imgW, imgH, color, inacti
         stroke={color}
         strokeWidth={isSelected ? 2.5 : 1.5}
         fill={color + '25'}
-        draggable={!inactive}
-        listening={!inactive}
+        draggable
         onClick={onSelect}
         onTap={onSelect}
         onDragEnd={e => {
@@ -78,7 +77,7 @@ function OBBBox({ box, isSelected, onSelect, onUpdate, imgW, imgH, color, inacti
         fill={color}
         listening={false}
       />
-      {isSelected && !inactive && (
+      {isSelected && (
         <Transformer
           ref={trRef}
           rotateEnabled
@@ -105,12 +104,19 @@ export default function AnnotationCanvas() {
   const containerRef = useRef()
   const stageRef = useRef()
 
-  // Draw mode state
+  // Draw mode
   const [drawMode, setDrawMode] = useState(false)
-  const [newBoxClass, setNewBoxClass] = useState('')
   const [drawing, setDrawing] = useState(false)
   const [drawStart, setDrawStart] = useState(null)
   const [drawRect, setDrawRect] = useState(null)
+  const [crosshair, setCrosshair] = useState(null)
+
+  // Label picker (post-draw)
+  const [pendingBox, setPendingBox] = useState(null)
+  const [pickerPos, setPickerPos] = useState(null)
+  const [labelSearch, setLabelSearch] = useState('')
+  const pickerRef = useRef()
+
   const [batchClasses, setBatchClasses] = useState([])
 
   const siblingTaskIds = location.state?.siblingTaskIds || []
@@ -124,11 +130,8 @@ export default function AnnotationCanvas() {
     async function load() {
       const t = await apiGet(`/tasks/${taskId}`)
       setTask(t)
-
-      // Fetch batch-wide class list for the draw-box dropdown
       const img = await apiGet(`/images/${t.image_id}`)
       apiGet(`/batches/${img.batch_id}/classes`).then(setBatchClasses).catch(() => {})
-
       if (t.annotations_json) {
         try {
           const saved = JSON.parse(t.annotations_json)
@@ -139,12 +142,9 @@ export default function AnnotationCanvas() {
       }
       const preds = await apiGet(`/tasks/${taskId}/predictions`)
       const loaded = preds.map((p, i) => ({
-        _id: i,
-        class_name: p.class_name,
-        cx: p.cx, cy: p.cy,
-        w: p.w, h: p.h,
-        angle: p.angle,
-        confidence: p.confidence,
+        _id: i, class_name: p.class_name,
+        cx: p.cx, cy: p.cy, w: p.w, h: p.h,
+        angle: p.angle, confidence: p.confidence,
       }))
       setBoxes(loaded)
       setImgUrl(imageFileUrl(t.image_id))
@@ -165,15 +165,11 @@ export default function AnnotationCanvas() {
     setImgDims({ w, h })
   }, [konvaImg])
 
-  // Set default class when draw mode activates
-  useEffect(() => {
-    if (drawMode && !newBoxClass) {
-      const first = batchClasses[0] || allClasses[0]
-      if (first) setNewBoxClass(first)
-    }
-  }, [drawMode, batchClasses])
-
   const allClasses = [...new Set(boxes.map(b => b.class_name))]
+  const availableClasses = batchClasses.length > 0 ? batchClasses : allClasses
+  const filteredClasses = labelSearch
+    ? availableClasses.filter(c => c.toLowerCase().includes(labelSearch.toLowerCase()))
+    : availableClasses
 
   function updateBox(updated) {
     setBoxes(prev => prev.map(b => b._id === updated._id ? updated : b))
@@ -190,32 +186,61 @@ export default function AnnotationCanvas() {
     navigate(`/annotate/${newTaskId}`, { state: { siblingTaskIds, currentIndex: idx } })
   }
 
-  function toggleDrawMode() {
-    setDrawMode(prev => !prev)
+  function enterDrawMode() {
+    setDrawMode(true)
+    setSelectedId(null)
+    setPendingBox(null)
+    setPickerPos(null)
+    setLabelSearch('')
+  }
+
+  function exitDrawMode() {
+    setDrawMode(false)
     setDrawing(false)
     setDrawRect(null)
-    setSelectedId(null)
+    setCrosshair(null)
+    setPendingBox(null)
+    setPickerPos(null)
+    setLabelSearch('')
+  }
+
+  function cancelPending() {
+    setPendingBox(null)
+    setPickerPos(null)
+    setLabelSearch('')
+  }
+
+  function assignLabel(className) {
+    if (!pendingBox) return
+    const finalBox = { ...pendingBox, class_name: className }
+    setBoxes(prev => [...prev, finalBox])
+    setSelectedId(finalBox._id)
+    setPendingBox(null)
+    setPickerPos(null)
+    setLabelSearch('')
+    setDrawMode(false) // exit draw mode so transformer shows for immediate editing
   }
 
   // Stage mouse handlers
   function handleMouseDown(e) {
+    if (pendingBox) return // label picker is open, ignore
     if (!drawMode) {
       if (e.target === e.target.getStage() || e.target.getClassName() === 'Image') {
         setSelectedId(null)
       }
       return
     }
-    const stage = stageRef.current
-    const pos = stage.getPointerPosition()
+    const pos = stageRef.current.getPointerPosition()
     setDrawing(true)
     setDrawStart(pos)
     setDrawRect({ x: pos.x, y: pos.y, width: 0, height: 0 })
   }
 
   function handleMouseMove(e) {
+    const pos = stageRef.current.getPointerPosition()
+    if (!pos) return
+    if (drawMode && !pendingBox) setCrosshair(pos)
     if (!drawMode || !drawing || !drawStart) return
-    const stage = stageRef.current
-    const pos = stage.getPointerPosition()
     setDrawRect({
       x: Math.min(drawStart.x, pos.x),
       y: Math.min(drawStart.y, pos.y),
@@ -224,7 +249,11 @@ export default function AnnotationCanvas() {
     })
   }
 
-  function handleMouseUp(_e) {
+  function handleMouseLeave() {
+    setCrosshair(null)
+  }
+
+  function handleMouseUp() {
     if (!drawMode || !drawing || !drawRect) return
     setDrawing(false)
 
@@ -234,10 +263,8 @@ export default function AnnotationCanvas() {
       return
     }
 
-    const className = newBoxClass.trim() || batchClasses[0] || allClasses[0] || 'object'
-    const newBox = {
+    const pending = {
       _id: Date.now(),
-      class_name: className,
       cx: (x + width / 2) / imgDims.w,
       cy: (y + height / 2) / imgDims.h,
       w: width / imgDims.w,
@@ -246,17 +273,21 @@ export default function AnnotationCanvas() {
       confidence: 1,
     }
 
-    setBoxes(prev => [...prev, newBox])
-    setSelectedId(newBox._id)
+    // Calculate screen position for label picker
+    const stageContainer = stageRef.current.container()
+    const rect = stageContainer.getBoundingClientRect()
+    setPickerPos({
+      x: rect.left + x + width / 2,
+      y: Math.min(rect.top + y + height + 8, window.innerHeight - 280),
+    })
+    setPendingBox(pending)
     setDrawRect(null)
-    // Stay in draw mode so user can draw more boxes — press Escape or click button to exit
+    setCrosshair(null)
   }
 
   async function saveAndComplete(goNext = false) {
     if (task?.status === 'completed') {
-      const confirmed = window.confirm(
-        'This task is already marked complete. Do you want to replace the saved annotations with your current changes?'
-      )
+      const confirmed = window.confirm('This task is already marked complete. Replace saved annotations?')
       if (!confirmed) return
     }
     setSaving(true)
@@ -266,11 +297,8 @@ export default function AnnotationCanvas() {
         status: 'completed',
         annotations_json: JSON.stringify(annotations),
       })
-      if (goNext && hasNext) {
-        goToSibling(currentIndex + 1)
-      } else {
-        navigate('/queue')
-      }
+      if (goNext && hasNext) goToSibling(currentIndex + 1)
+      else navigate('/queue')
     } catch (err) {
       alert(err.message)
     } finally {
@@ -280,11 +308,8 @@ export default function AnnotationCanvas() {
 
   async function skip() {
     await apiPatch(`/tasks/${taskId}`, { status: 'skipped' })
-    if (hasNext) {
-      goToSibling(currentIndex + 1)
-    } else {
-      navigate('/queue')
-    }
+    if (hasNext) goToSibling(currentIndex + 1)
+    else navigate('/queue')
   }
 
   async function deleteImage() {
@@ -292,13 +317,9 @@ export default function AnnotationCanvas() {
     if (!window.confirm('Delete this image from the batch? This cannot be undone.')) return
     try {
       await apiDelete(`/images/${task.image_id}`)
-      if (hasNext) {
-        goToSibling(currentIndex + 1)
-      } else if (hasPrev) {
-        goToSibling(currentIndex - 1)
-      } else {
-        navigate('/queue')
-      }
+      if (hasNext) goToSibling(currentIndex + 1)
+      else if (hasPrev) goToSibling(currentIndex - 1)
+      else navigate('/queue')
     } catch (err) {
       alert(err.message)
     }
@@ -306,14 +327,37 @@ export default function AnnotationCanvas() {
 
   useEffect(() => {
     function onKey(e) {
-      if (e.key === 'Escape') { setDrawMode(false); setDrawing(false); setDrawRect(null) }
-      if (e.key === 'Delete' || e.key === 'Backspace') deleteSelected()
+      // Escape: cancel pending label or exit draw mode
+      if (e.key === 'Escape') {
+        if (pendingBox) cancelPending()
+        else exitDrawMode()
+        return
+      }
+      // D: toggle draw mode
+      if ((e.key === 'd' || e.key === 'D') && !e.target.closest('input, textarea')) {
+        if (pendingBox) return
+        drawMode ? exitDrawMode() : enterDrawMode()
+        return
+      }
+      // Delete selected box
+      if ((e.key === 'Delete' || e.key === 'Backspace') && !e.target.closest('input, textarea')) {
+        deleteSelected()
+      }
+      // Navigate
       if (e.key === 'ArrowRight' && hasNext) goToSibling(currentIndex + 1)
       if (e.key === 'ArrowLeft' && hasPrev) goToSibling(currentIndex - 1)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selectedId, boxes, currentIndex, siblingTaskIds, drawMode])
+  }, [selectedId, boxes, currentIndex, siblingTaskIds, drawMode, pendingBox])
+
+  // Auto-focus search in picker when it opens
+  useEffect(() => {
+    if (pickerPos && pickerRef.current) {
+      const input = pickerRef.current.querySelector('input')
+      if (input) input.focus()
+    }
+  }, [pickerPos])
 
   return (
     <div className="min-h-screen bg-gray-950 flex flex-col">
@@ -322,25 +366,22 @@ export default function AnnotationCanvas() {
         <div className="flex items-center gap-3">
           <button onClick={() => navigate('/queue')} className="text-gray-400 hover:text-white text-sm">← Back</button>
           <span className="text-white text-sm font-medium">Task #{taskId}</span>
-          {task && <span className={`text-xs px-2 py-0.5 rounded-full ${task.status === 'completed' ? 'bg-green-900 text-green-300' : 'bg-gray-700 text-gray-300'}`}>{task.status}</span>}
+          {task && (
+            <span className={`text-xs px-2 py-0.5 rounded-full ${task.status === 'completed' ? 'bg-green-900 text-green-300' : 'bg-gray-700 text-gray-300'}`}>
+              {task.status}
+            </span>
+          )}
         </div>
 
-        {/* Prev / Next navigation */}
         {siblingTaskIds.length > 0 && (
           <div className="flex items-center gap-1">
-            <button
-              onClick={() => goToSibling(currentIndex - 1)}
-              disabled={!hasPrev}
-              className="text-gray-300 hover:text-white disabled:opacity-25 disabled:cursor-not-allowed px-3 py-1 rounded border border-gray-700 hover:border-gray-500 text-sm transition"
-            >
+            <button onClick={() => goToSibling(currentIndex - 1)} disabled={!hasPrev}
+              className="text-gray-300 hover:text-white disabled:opacity-25 px-3 py-1 rounded border border-gray-700 hover:border-gray-500 text-sm transition">
               ‹ Prev
             </button>
             <span className="text-xs text-gray-500 px-2">{currentIndex + 1} / {siblingTaskIds.length}</span>
-            <button
-              onClick={() => goToSibling(currentIndex + 1)}
-              disabled={!hasNext}
-              className="text-gray-300 hover:text-white disabled:opacity-25 disabled:cursor-not-allowed px-3 py-1 rounded border border-gray-700 hover:border-gray-500 text-sm transition"
-            >
+            <button onClick={() => goToSibling(currentIndex + 1)} disabled={!hasNext}
+              className="text-gray-300 hover:text-white disabled:opacity-25 px-3 py-1 rounded border border-gray-700 hover:border-gray-500 text-sm transition">
               Next ›
             </button>
           </div>
@@ -348,54 +389,28 @@ export default function AnnotationCanvas() {
 
         <div className="flex items-center gap-2">
           <span className="text-xs text-gray-500">
-            {boxes.length} boxes · {drawMode ? 'draw mode — click & drag' : selectedId !== null ? '1 selected (Del to remove)' : 'click to select'}
+            {boxes.length} box{boxes.length !== 1 ? 'es' : ''} ·{' '}
+            {drawMode ? 'Draw mode — drag to create box' : selectedId !== null ? 'Selected (Del to remove)' : 'Click box to select · D to draw'}
           </span>
-
-          {/* Draw mode toggle */}
           <button
-            onClick={toggleDrawMode}
+            onClick={drawMode ? exitDrawMode : enterDrawMode}
             className={`text-sm px-3 py-1 rounded border transition ${drawMode ? 'bg-blue-600 border-blue-500 text-white' : 'text-blue-400 border-blue-900 hover:border-blue-600 hover:text-blue-300'}`}
           >
-            ✏ {drawMode ? 'Drawing...' : 'Draw Box'}
+            ✏ {drawMode ? 'Drawing... (Esc)' : 'Draw Box [D]'}
           </button>
-
-          <button onClick={deleteImage} className="text-sm text-red-500 hover:text-red-400 px-3 py-1 rounded border border-red-900 hover:border-red-700 transition" title="Delete this image from the batch">🗑 Delete Image</button>
+          <button onClick={deleteImage} className="text-sm text-red-500 hover:text-red-400 px-3 py-1 rounded border border-red-900 hover:border-red-700 transition" title="Delete image">🗑</button>
           <button onClick={skip} className="text-sm text-gray-400 hover:text-white px-3 py-1 rounded border border-gray-700 hover:border-gray-500 transition">Skip</button>
-          <button
-            onClick={() => saveAndComplete(true)}
-            disabled={saving}
-            className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm px-4 py-1.5 rounded transition"
-          >
+          <button onClick={() => saveAndComplete(true)} disabled={saving}
+            className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm px-4 py-1.5 rounded transition">
             {saving ? 'Saving...' : hasNext ? '✓ Done & Next' : '✓ Mark Complete'}
           </button>
         </div>
       </header>
 
-      {/* Draw mode toolbar */}
-      {drawMode && (
-        <div className="bg-blue-950 border-b border-blue-900 px-4 py-2 flex items-center gap-3 shrink-0">
-          <span className="text-xs text-blue-300 font-medium">Class for new box:</span>
-          <input
-            list="class-options"
-            value={newBoxClass}
-            onChange={e => setNewBoxClass(e.target.value)}
-            placeholder="Type or select class name"
-            className="bg-blue-900 border border-blue-700 text-white text-sm rounded px-2 py-0.5 focus:outline-none focus:border-blue-400 w-48"
-            autoFocus
-          />
-          <datalist id="class-options">
-            {(batchClasses.length > 0 ? batchClasses : allClasses).map(cls => (
-              <option key={cls} value={cls} />
-            ))}
-          </datalist>
-          <span className="text-xs text-blue-400">Click and drag on the image to draw · Press Esc to exit</span>
-        </div>
-      )}
-
-      {/* Legend */}
-      {allClasses.length > 0 && !drawMode && (
-        <div className="bg-gray-900 border-b border-gray-800 px-4 py-2 flex items-center gap-4 shrink-0">
-          {allClasses.map((cls, i) => (
+      {/* Class legend */}
+      {availableClasses.length > 0 && (
+        <div className="bg-gray-900 border-b border-gray-800 px-4 py-2 flex items-center gap-4 shrink-0 flex-wrap">
+          {availableClasses.map((cls, i) => (
             <div key={cls} className="flex items-center gap-1.5">
               <span className="w-3 h-3 rounded-sm" style={{ background: BOX_COLORS[i % BOX_COLORS.length] }} />
               <span className="text-xs text-gray-300">{cls}</span>
@@ -415,9 +430,12 @@ export default function AnnotationCanvas() {
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseLeave}
           >
             <Layer>
               <KonvaImage image={konvaImg} width={imgDims.w} height={imgDims.h} />
+
+              {/* Existing boxes */}
               {boxes.map(box => (
                 <OBBBox
                   key={box._id}
@@ -427,23 +445,41 @@ export default function AnnotationCanvas() {
                   onUpdate={updateBox}
                   imgW={imgDims.w}
                   imgH={imgDims.h}
-                  color={colorFor(box.class_name, allClasses)}
-                  inactive={drawMode}
+                  color={colorFor(box.class_name, availableClasses)}
                 />
               ))}
+
+              {/* Pending box preview (drawn but not labeled yet) */}
+              {pendingBox && (() => {
+                const props = predToRect(pendingBox, imgDims.w, imgDims.h)
+                return (
+                  <Rect
+                    {...props}
+                    stroke="#facc15"
+                    strokeWidth={2}
+                    fill="#facc1520"
+                    dash={[6, 3]}
+                    listening={false}
+                  />
+                )
+              })()}
+
               {/* Drawing preview rect */}
               {drawMode && drawRect && drawRect.width > 0 && drawRect.height > 0 && (
                 <Rect
-                  x={drawRect.x}
-                  y={drawRect.y}
-                  width={drawRect.width}
-                  height={drawRect.height}
-                  stroke="#60a5fa"
-                  strokeWidth={1.5}
-                  fill="#60a5fa22"
-                  dash={[6, 3]}
-                  listening={false}
+                  x={drawRect.x} y={drawRect.y}
+                  width={drawRect.width} height={drawRect.height}
+                  stroke="#60a5fa" strokeWidth={1.5} fill="#60a5fa22"
+                  dash={[6, 3]} listening={false}
                 />
+              )}
+
+              {/* Crosshair guides */}
+              {drawMode && crosshair && !pendingBox && (
+                <>
+                  <Line points={[0, crosshair.y, stageSize.w, crosshair.y]} stroke="#60a5fa" strokeWidth={0.5} opacity={0.4} listening={false} />
+                  <Line points={[crosshair.x, 0, crosshair.x, stageSize.h]} stroke="#60a5fa" strokeWidth={0.5} opacity={0.4} listening={false} />
+                </>
               )}
             </Layer>
           </Stage>
@@ -453,6 +489,49 @@ export default function AnnotationCanvas() {
           </div>
         )}
       </div>
+
+      {/* Label picker popup */}
+      {pendingBox && pickerPos && (
+        <div
+          ref={pickerRef}
+          style={{
+            position: 'fixed',
+            left: pickerPos.x,
+            top: pickerPos.y,
+            transform: 'translateX(-50%)',
+            zIndex: 1000,
+          }}
+          className="bg-gray-800 border border-gray-600 rounded-xl shadow-2xl p-3 w-56"
+        >
+          <p className="text-xs text-gray-400 font-medium mb-2">Select class for this box</p>
+          <input
+            placeholder="Search classes..."
+            value={labelSearch}
+            onChange={e => setLabelSearch(e.target.value)}
+            className="w-full bg-gray-700 border border-gray-600 text-white text-sm rounded-lg px-2 py-1.5 mb-2 outline-none focus:border-blue-500"
+          />
+          <div className="max-h-52 overflow-y-auto flex flex-col gap-0.5">
+            {filteredClasses.length > 0 ? filteredClasses.map((cls, i) => (
+              <button
+                key={cls}
+                onClick={() => assignLabel(cls)}
+                className="text-left text-sm px-2 py-1.5 rounded-lg hover:bg-gray-700 flex items-center gap-2 transition"
+              >
+                <span className="w-3 h-3 rounded-sm shrink-0" style={{ background: BOX_COLORS[availableClasses.indexOf(cls) % BOX_COLORS.length] }} />
+                <span className="text-white">{cls}</span>
+              </button>
+            )) : (
+              <p className="text-xs text-gray-500 px-2 py-2">No classes found</p>
+            )}
+          </div>
+          <button
+            onClick={cancelPending}
+            className="w-full mt-2 text-xs text-gray-500 hover:text-gray-300 transition"
+          >
+            Cancel (Esc)
+          </button>
+        </div>
+      )}
     </div>
   )
 }
