@@ -6,6 +6,7 @@ import zipfile
 
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
+from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -236,6 +237,62 @@ def reassign_tasks(
         "tasks_reset": len(tasks),
         "message": f"{len(tasks)} task(s) reset to pending. Annotators will see them in their queue with existing annotations preserved.",
     }
+
+
+class RebalanceRequest(BaseModel):
+    annotator_ids: list[int] = []
+
+
+@router.post("/{batch_id}/rebalance")
+def rebalance_tasks(
+    batch_id: int,
+    payload: RebalanceRequest = RebalanceRequest(),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_lead),
+):
+    """
+    Redistribute all pending tasks in a batch equally across annotators (round-robin).
+    Pass annotator_ids to target specific users, or omit to use all annotators.
+    """
+    batch = db.query(Batch).filter(Batch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    # Get annotators
+    query = db.query(User).filter(User.role == UserRole.annotator)
+    if payload.annotator_ids:
+        query = query.filter(User.id.in_(payload.annotator_ids))
+    annotators = query.all()
+    if not annotators:
+        raise HTTPException(status_code=400, detail="No annotators found.")
+
+    # Get all pending tasks for this batch
+    pending_tasks = (
+        db.query(Task)
+        .join(Image)
+        .filter(
+            Image.batch_id == batch_id,
+            Task.status == TaskStatus.pending,
+        )
+        .all()
+    )
+    if not pending_tasks:
+        raise HTTPException(status_code=400, detail="No pending tasks to rebalance.")
+
+    # Redistribute round-robin
+    distribution: dict[str, int] = {a.email: 0 for a in annotators}
+    for i, task in enumerate(pending_tasks):
+        annotator = annotators[i % len(annotators)]
+        task.user_id = annotator.id
+        distribution[annotator.email] += 1
+
+    db.commit()
+    return {
+        "batch_id": batch_id,
+        "tasks_redistributed": len(pending_tasks),
+        "distribution": distribution,
+    }
+
 
 
 @router.get("/{batch_id}/classes")

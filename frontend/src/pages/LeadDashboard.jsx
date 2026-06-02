@@ -309,6 +309,32 @@ export default function LeadDashboard() {
     }
   }
 
+  async function rebalanceTasks(annotatorIds = []) {
+    if (!selectedBatch) return
+    const total = annotatorStats?.reduce((s, a) => s + (a.pending ?? 0), 0) ?? 0
+    const names = annotatorIds.length > 0
+      ? users.filter(u => annotatorIds.includes(u.id)).map(u => u.name || u.email).join(', ')
+      : 'all annotators'
+    const each = annotatorIds.length > 0
+      ? Math.ceil(total / annotatorIds.length)
+      : Math.ceil(total / (annotatorStats?.length || 1))
+    if (!window.confirm(`Redistribute ${total} pending tasks equally across ${names}.\nEach will get ~${each} tasks.\n\nContinue?`)) return
+    setMsg('')
+    try {
+      const result = await apiPost(`/batches/${selectedBatch.id}/rebalance`, annotatorIds.length > 0 ? { annotator_ids: annotatorIds } : {})
+      const dist = Object.entries(result.distribution).map(([e, c]) => `${e}: ${c}`).join(', ')
+      setMsg(`✓ ${result.tasks_redistributed} tasks redistributed. ${dist}`)
+      const [prog, stats] = await Promise.all([
+        apiGet(`/batches/${selectedBatch.id}/progress`),
+        apiGet(`/batches/${selectedBatch.id}/annotator-stats`),
+      ])
+      setProgress(prog)
+      setAnnotatorStats(stats)
+    } catch (err) {
+      alert(`Rebalance failed: ${err.message}`)
+    }
+  }
+
   async function reassignTasks() {
     if (!selectedBatch) return
     const completedCount = progress?.completed ?? '?'
@@ -981,7 +1007,18 @@ export default function LeadDashboard() {
               {/* Annotator stats */}
               {annotatorStats.length > 0 && (
                 <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-                  <h3 className="text-sm font-semibold text-gray-300 mb-3">Annotator Progress</h3>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold text-gray-300">Annotator Progress</h3>
+                    {annotatorStats.some(s => s.pending > 0) && (
+                      <button
+                        onClick={() => rebalanceTasks([])}
+                        className="text-xs text-blue-400 hover:text-blue-300 border border-blue-900 hover:border-blue-700 px-2 py-1 rounded transition"
+                        title="Redistribute all pending tasks equally across all annotators"
+                      >
+                        ⚖ Rebalance Equally
+                      </button>
+                    )}
+                  </div>
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="text-xs text-gray-500 border-b border-gray-800">
@@ -996,7 +1033,7 @@ export default function LeadDashboard() {
                       {annotatorStats.map(s => {
                         const pct = s.total > 0 ? Math.round((s.completed / s.total) * 100) : 0
                         return (
-                          <tr key={s.user_id} className="border-b border-gray-800 last:border-0">
+                          <tr key={s.user_id} className="border-b border-gray-800 last:border-0 group">
                             <td className="py-2 text-gray-300 truncate max-w-[120px]">{s.name || s.email}</td>
                             <td className="py-2 text-center text-gray-400">{s.total}</td>
                             <td className="py-2 text-center text-green-400">{s.completed}</td>
@@ -1007,6 +1044,18 @@ export default function LeadDashboard() {
                                   <div className="bg-green-500 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
                                 </div>
                                 <span className="text-xs text-gray-400 w-8">{pct}%</span>
+                                {s.pending > 0 && annotatorStats.length > 1 && (
+                                  <button
+                                    onClick={() => {
+                                      const others = annotatorStats.filter(a => a.user_id !== s.user_id)
+                                      rebalanceTasks(others.map(a => a.user_id))
+                                    }}
+                                    className="opacity-0 group-hover:opacity-100 text-xs text-gray-500 hover:text-blue-400 transition ml-1"
+                                    title={`Move ${s.name || s.email}'s pending tasks to others`}
+                                  >
+                                    →
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -1014,6 +1063,7 @@ export default function LeadDashboard() {
                       })}
                     </tbody>
                   </table>
+                  <p className="text-xs text-gray-600 mt-3">Hover a row and click → to move that annotator's pending tasks to others. Or use Rebalance Equally to split evenly.</p>
                 </div>
               )}
 
