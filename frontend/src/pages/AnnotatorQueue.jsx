@@ -48,15 +48,18 @@ export default function AnnotatorQueue() {
   const totalCompleted = tasks.filter(t => t.status === 'completed' || t.status === 'skipped').length
 
   function openTask(task, batchTasks) {
-    // Sort to match display order: pending/in_progress first, then completed/skipped
-    // This ensures Prev/Next in the canvas matches the visual queue order
-    const sorted = [
-      ...batchTasks.filter(t => t.status === 'pending' || t.status === 'in_progress'),
-      ...batchTasks.filter(t => t.status === 'completed' || t.status === 'skipped'),
-    ]
-    const siblingTaskIds = sorted.map(t => t.id)
-    const currentIndex = siblingTaskIds.indexOf(task.id)
-    navigate(`/annotate/${task.id}`, { state: { siblingTaskIds, currentIndex } })
+    const isPending = task.status === 'pending' || task.status === 'in_progress'
+
+    if (isPending) {
+      // Navigate only through pending tasks — counter shows "X of Y remaining"
+      const pendingTasks = batchTasks.filter(t => t.status === 'pending' || t.status === 'in_progress')
+      const siblingTaskIds = pendingTasks.map(t => t.id)
+      const currentIndex = siblingTaskIds.indexOf(task.id)
+      navigate(`/annotate/${task.id}`, { state: { siblingTaskIds, currentIndex, totalInBatch: batchTasks.length } })
+    } else {
+      // Reviewing a completed task — no Prev/Next navigation (open standalone)
+      navigate(`/annotate/${task.id}`, { state: { siblingTaskIds: [], currentIndex: -1 } })
+    }
   }
 
   async function deleteTask(task) {

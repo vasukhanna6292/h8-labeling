@@ -382,7 +382,9 @@ export default function AnnotationCanvas() {
               className="text-gray-300 hover:text-white disabled:opacity-25 px-3 py-1 rounded border border-gray-700 hover:border-gray-500 text-sm transition">
               ‹ Prev
             </button>
-            <span className="text-xs text-gray-500 px-2">{currentIndex + 1} / {siblingTaskIds.length}</span>
+            <span className="text-xs text-gray-500 px-2">
+              {currentIndex + 1} / {siblingTaskIds.length} remaining
+            </span>
             <button onClick={() => goToSibling(currentIndex + 1)} disabled={!hasNext}
               className="text-gray-300 hover:text-white disabled:opacity-25 px-3 py-1 rounded border border-gray-700 hover:border-gray-500 text-sm transition">
               Next ›
