@@ -439,11 +439,19 @@ export default function LeadDashboard() {
   return (
     <div className="min-h-screen bg-gray-950">
       {/* Header */}
-      <header className="bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center justify-between">
-        <h1 className="text-lg font-bold text-white">H8 Labeling <span className="text-blue-400 text-sm font-normal ml-2">Lead</span></h1>
+      <header className="bg-gray-900 border-b border-gray-700 px-6 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-7 h-7 rounded-lg bg-blue-700 flex items-center justify-center shrink-0">
+            <span className="text-gray-100 font-bold text-xs">H8</span>
+          </div>
+          <div>
+            <h1 className="text-sm font-semibold text-gray-100 leading-tight">H8 Labeling <span className="text-blue-400 font-normal">· Lead</span></h1>
+            <p className="text-gray-500 text-xs leading-none">© 2026 Vasu Khanna</p>
+          </div>
+        </div>
         <div className="flex items-center gap-4">
-          <span className="text-gray-400 text-sm">{user?.email}</span>
-          <button onClick={() => { logout(); navigate('/login') }} className="text-sm text-gray-400 hover:text-white">Sign out</button>
+          <span className="text-gray-400 text-xs">{user?.email}</span>
+          <button onClick={() => { logout(); navigate('/login') }} className="text-xs text-gray-500 hover:text-gray-200 transition">Sign out</button>
         </div>
       </header>
 

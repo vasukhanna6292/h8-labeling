@@ -68,15 +68,20 @@ export default function AnnotatorQueue() {
 
   return (
     <div className="min-h-screen bg-gray-950">
-      <header className="bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center justify-between">
-        <h1 className="text-lg font-bold text-white">H8 Labeling <span className="text-green-400 text-sm font-normal ml-2">Annotator</span></h1>
+      <header className="bg-gray-900 border-b border-gray-700 px-6 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-7 h-7 rounded-lg bg-blue-700 flex items-center justify-center shrink-0">
+            <span className="text-gray-100 font-bold text-xs">H8</span>
+          </div>
+          <h1 className="text-sm font-semibold text-gray-100">H8 Labeling <span className="text-green-400 font-normal ml-1">· Annotator</span></h1>
+        </div>
         <div className="flex items-center gap-4">
-          <span className="text-gray-400 text-sm">{user?.email}</span>
-          <button onClick={() => { logout(); navigate('/login') }} className="text-sm text-gray-400 hover:text-white">Sign out</button>
+          <span className="text-gray-400 text-xs">{user?.email}</span>
+          <button onClick={() => { logout(); navigate('/login') }} className="text-xs text-gray-500 hover:text-gray-200 transition">Sign out</button>
         </div>
       </header>
 
-      <div className="max-w-2xl mx-auto p-6">
+      <div className="max-w-2xl mx-auto p-6 pb-16">
         {loading ? (
           <p className="text-gray-400 text-center mt-12">Loading tasks...</p>
         ) : error ? (
@@ -179,6 +184,10 @@ export default function AnnotatorQueue() {
           </>
         )}
       </div>
+      {/* Footer */}
+      <footer className="fixed bottom-0 left-0 right-0 py-2 text-center text-xs text-gray-600 bg-gray-950 border-t border-gray-800">
+        © 2026 Vasu Khanna · H8 Labeling
+      </footer>
     </div>
   )
 }

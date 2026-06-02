@@ -458,9 +458,9 @@ export default function AnnotationCanvas() {
                 return (
                   <Rect
                     {...props}
-                    stroke="#facc15"
+                    stroke="#c9a050"
                     strokeWidth={2}
-                    fill="#facc1520"
+                    fill="#c9a05018"
                     dash={[6, 3]}
                     listening={false}
                   />
@@ -472,7 +472,7 @@ export default function AnnotationCanvas() {
                 <Rect
                   x={drawRect.x} y={drawRect.y}
                   width={drawRect.width} height={drawRect.height}
-                  stroke="#60a5fa" strokeWidth={1.5} fill="#60a5fa22"
+                  stroke="#c9a050" strokeWidth={1.5} fill="#c9a05018"
                   dash={[6, 3]} listening={false}
                 />
               )}
@@ -480,8 +480,8 @@ export default function AnnotationCanvas() {
               {/* Crosshair guides */}
               {drawMode && crosshair && !pendingBox && (
                 <>
-                  <Line points={[0, crosshair.y, stageSize.w, crosshair.y]} stroke="#60a5fa" strokeWidth={0.5} opacity={0.4} listening={false} />
-                  <Line points={[crosshair.x, 0, crosshair.x, stageSize.h]} stroke="#60a5fa" strokeWidth={0.5} opacity={0.4} listening={false} />
+                  <Line points={[0, crosshair.y, stageSize.w, crosshair.y]} stroke="#c9a050" strokeWidth={0.5} opacity={0.5} listening={false} />
+                  <Line points={[crosshair.x, 0, crosshair.x, stageSize.h]} stroke="#c9a050" strokeWidth={0.5} opacity={0.5} listening={false} />
                 </>
               )}
             </Layer>
