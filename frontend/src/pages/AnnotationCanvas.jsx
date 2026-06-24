@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { Stage, Layer, Image as KonvaImage, Rect, Transformer, Text, Line } from 'react-konva'
 import useImage from 'use-image'
-import { apiGet, apiPatch, apiDelete, imageFileUrl } from '../api/client'
+import { apiGet, apiPatch, apiDelete, fetchImageObjectUrl } from '../api/client'
 
 const BOX_COLORS = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F', '#82E0AA', '#F1948A']
 
@@ -131,16 +131,18 @@ export default function AnnotationCanvas() {
   const [konvaImg] = useImage(imgUrl, 'anonymous')
 
   useEffect(() => {
+    let objectUrl = null
     async function load() {
       const t = await apiGet(`/tasks/${taskId}`)
       setTask(t)
       const img = await apiGet(`/images/${t.image_id}`)
       apiGet(`/batches/${img.batch_id}/classes`).then(setBatchClasses).catch(() => {})
+      objectUrl = await fetchImageObjectUrl(t.image_id)
+      setImgUrl(objectUrl)
       if (t.annotations_json) {
         try {
           const saved = JSON.parse(t.annotations_json)
           setBoxes(saved.map((b, i) => ({ ...b, _id: i })))
-          setImgUrl(imageFileUrl(t.image_id))
           return
         } catch {}
       }
@@ -151,9 +153,11 @@ export default function AnnotationCanvas() {
         angle: p.angle, confidence: p.confidence,
       }))
       setBoxes(loaded)
-      setImgUrl(imageFileUrl(t.image_id))
     }
     load()
+    return () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
   }, [taskId])
 
   useEffect(() => {

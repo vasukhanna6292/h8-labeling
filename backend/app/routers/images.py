@@ -120,6 +120,7 @@ def delete_image(
 def serve_image_file(
     image_id: int,
     db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
 ):
     """Serve the raw image file. Streams GCS images through the backend to avoid CORS issues."""
     import io

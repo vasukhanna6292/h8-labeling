@@ -41,6 +41,15 @@ export function imageFileUrl(imageId) {
   return `${API}/images/${imageId}/file`
 }
 
+export async function fetchImageObjectUrl(imageId) {
+  const res = await fetch(imageFileUrl(imageId), {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  })
+  if (!res.ok) throw new Error('Failed to load image')
+  const blob = await res.blob()
+  return URL.createObjectURL(blob)
+}
+
 export async function login(email, password) {
   const res = await fetch(`${API}/auth/login`, {
     method: 'POST',
