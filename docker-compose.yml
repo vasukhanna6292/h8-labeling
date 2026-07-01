@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:15
+    restart: unless-stopped
     environment:
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: admin123
@@ -19,6 +20,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "6379:6379"
     networks:
@@ -31,6 +33,7 @@ services:
 
   backend:
     build: ./backend
+    restart: unless-stopped
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - ./backend:/app
@@ -51,6 +54,7 @@ services:
 
   celery_worker:
     build: ./backend
+    restart: unless-stopped
     command: celery -A app.worker.celery_app worker --loglevel=info
     volumes:
       - ./backend:/app
@@ -77,6 +81,7 @@ services:
 
   celery_beat:
     build: ./backend
+    restart: unless-stopped
     command: celery -A app.worker.celery_app beat --loglevel=info
     volumes:
       - ./backend:/app
@@ -89,6 +94,7 @@ services:
 
   frontend:
     build: ./frontend
+    restart: unless-stopped
     ports:
       - "3000:3000"
     volumes:
@@ -101,6 +107,7 @@ services:
 
   nginx:
     image: nginx:alpine
+    restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
